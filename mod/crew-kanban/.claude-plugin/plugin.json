@@ -1,0 +1,15 @@
+{
+  "name": "crew-kanban",
+  "version": "0.1.0",
+  "description": "A live view of this session's agents, tasks, file edits and activity: a band above the prompt and a Crew pane",
+  "author": { "name": "rbaga" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "reducedMotion": {
+      "type": "boolean",
+      "title": "Reduce motion",
+      "description": "Draw mascots still and editing files as a static tint, without the shimmer",
+      "default": false
+    }
+  }
+}

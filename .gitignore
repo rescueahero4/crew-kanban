@@ -1,0 +1,19 @@
+# Local tooling / design memory
+.impeccable/
+.design-recall/
+.claude/
+
+# Dependencies & build output
+node_modules/
+dist/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Env
+.env
+.env.*

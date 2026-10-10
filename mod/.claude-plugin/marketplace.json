@@ -1,0 +1,11 @@
+{
+  "name": "crew-kanban-mod",
+  "owner": { "name": "rbaga" },
+  "plugins": [
+    {
+      "name": "crew-kanban",
+      "source": "./crew-kanban",
+      "description": "A live view of this session's agents, tasks, file edits and activity: a band above the prompt and a Crew pane"
+    }
+  ]
+}
