@@ -10,6 +10,13 @@ const PANE = {
   scroll: { offset: 0, bodyRows: 40 },
   view: {},
 }
+// Text the drawing shows: in a Text or Button, or (on the desktop) in a pixel-drawn Svg's alt
+async function shows(ui: { find: Function; findAll: Function }, re: RegExp) {
+  if (await ui.find({ text: re })) return true
+  const svgs: { props: Record<string, unknown> }[] = await ui.findAll({ type: 'Svg' })
+  return svgs.some(s => re.test(String(s.props.alt ?? '')))
+}
+
 const BAND = { hasSurvey: false, isWorking: true, maxRows: 4, bodyColumns: 120, scroll: { offset: 0, bodyRows: 4 }, view: {} }
 
 test('tool calls read as the mockup words them', async () => {
@@ -51,14 +58,18 @@ test('the band and every screen of the pane draw on terminal and desktop', async
     await band.unmount()
 
     const ui = await $.ui.mount({ plugin: 'crew-kanban', surface, component: 'Pane', props: PANE, requestId: 'crew' })
-    expect(await ui.find({ text: /In Progress|Planning/ })).toBeDefined()
+    expect(await shows(ui, /In Progress|Planning/)).toBe(true)
     expect(await ui.find({ key: 'open-main' })).toBeDefined()
 
-    // Agent detail: Edits and the Activity Log
+    // Agent detail: the project folder as the Edits tree's root, and the Activity Log
     await ui.press({ key: 'open-main' })
     expect(await ui.find({ key: 'back' })).toBeDefined()
-    expect(await ui.find({ text: /Activity Log/ })).toBeDefined()
-    expect(await ui.find({ text: /Edited src\/hooks\.js/ })).toBeDefined()
+    // The terminal draws the project folder as the tree's root; the desktop, as the mockup, its entries
+    if (surface === 'terminal') expect(await ui.find({ key: 'dir-.' })).toBeDefined()
+    expect(await shows(ui, /Activity Log/)).toBe(true)
+    expect(await shows(ui, /Edited src\/hooks\.js/)).toBe(true)
+    // The file just written still shows as being edited: its name shimmers on the surface's own clock
+    expect(await ui.find({ key: 'sh-src/hooks.js' })).toBeDefined()
     await ui.press({ key: 'split-more' })
     await ui.press({ key: 'back' })
 
@@ -67,8 +78,8 @@ test('the band and every screen of the pane draw on terminal and desktop', async
     expect(await ui.find({ key: 'open-T-01' })).toBeDefined()
     await ui.press({ key: 'toggle-done' })
     await ui.press({ key: 'open-T-01' })
-    expect(await ui.find({ text: /Fix escape-model edge cases/ })).toBeDefined()
-    expect(await ui.find({ text: /Live/ })).toBeDefined()
+    expect(await shows(ui, /Fix escape-model edge cases/)).toBe(true)
+    expect(await shows(ui, /Live|Activity/)).toBe(true)
     await ui.press({ key: 'back' })
     expect(await ui.find({ key: 'open-T-01' })).toBeDefined()
     await ui.press({ key: 'tab-crew' })

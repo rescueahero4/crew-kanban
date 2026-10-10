@@ -40,7 +40,7 @@ export const KIND: Record<LogKind, string> = {
   search: '#8d8d8d',
   edit: '#e5a800',
   run: '#6eb2ff',
-  message: '#b48ead',
+  message: '#e8e8e7',
 }
 
 // The four library roles (mockup: MOCK.roles)

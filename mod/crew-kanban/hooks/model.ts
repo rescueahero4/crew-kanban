@@ -41,6 +41,9 @@ export function groupOf(raw: string): Status {
   return 'planning'
 }
 
+// A path inside the project, as rel() leaves it; one outside stays absolute and the Edits tree leaves it out
+export const isInProject = (path: string) => !/^([a-zA-Z]:|\/|~|\.\.\/)/.test(path)
+
 // A path as the Edits tree keys it: forward slashes, relative to the session's root
 export function rel(root: string, path: string): string {
   const p = path.replace(/\\/g, '/')
@@ -93,7 +96,8 @@ export function describe(tool: string, input: Record<string, unknown>, root: str
       return { kind: 'edit', text: 'Edited ' + where, path: where, change: 'modified' }
     case 'Bash':
     case 'PowerShell':
-      return { kind: 'run', text: 'Ran ' + clip(str('description') || str('command'), 64) }
+      // A call's own description already reads as an action ("Run npm test"); a bare command reads "Ran …"
+      return { kind: 'run', text: str('description') ? clip(str('description'), 72) : 'Ran ' + clip(str('command'), 64) }
     case 'Agent':
     case 'Task':
       return { kind: 'message', text: 'Started agent: ' + clip(str('description') || str('subagent_type'), 60) }

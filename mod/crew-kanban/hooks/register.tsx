@@ -40,6 +40,8 @@ const SKIP_DIRS = new Set(['.git', 'node_modules'])
 
 // Set from the mod's options when it loads
 let isReduced = false
+// CSS pixels per column on the Desktop app
+let cellPx = 8
 let tick = 0
 let isTurnRunning = false
 // Rasters the last drawing of the pane holds, for the animation timer to repaint
@@ -174,7 +176,9 @@ async function animate($: EngineInterface) {
 
 async function open($: EngineInterface) {
   await update($, openAtom, () => true)
-  await $.ui.open({ id: PANE, title: 'Crew', focus: true })
+  const opened = await $.ui.open({ id: PANE, title: 'Crew', focus: true })
+  // Say why when the pane waits undrawn, rather than nothing appearing
+  if (!opened.isPlaced) $.ui.toast(`Crew: ${opened.reason}`)
 }
 
 // The folders the Edits tree shows open, read from disk; a listing is reused for a few seconds
@@ -212,6 +216,7 @@ async function togglePane($: EngineInterface) {
 
 export const register: Register = (on, options) => {
   isReduced = options.reducedMotion === true
+  cellPx = typeof options.desktopCellWidth === 'number' && options.desktopCellWidth > 0 ? options.desktopCellWidth : 8
 
   // ── Session ───────────────────────────────────────────────────────────────────────
 
@@ -335,6 +340,7 @@ export const register: Register = (on, options) => {
       els,
       surface: e.surface,
       cols: Math.max(30, e.props.bodyColumns),
+      cellPx,
       rows: e.props.scroll.bodyRows,
       now,
       tick,

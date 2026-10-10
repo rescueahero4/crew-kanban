@@ -1,6 +1,6 @@
 {
   "name": "crew-kanban",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A live view of this session's agents, tasks, file edits and activity: a band above the prompt and a Crew pane",
   "author": { "name": "rbaga" },
   "types": "./types/index.d.ts",
@@ -10,6 +10,12 @@
       "title": "Reduce motion",
       "description": "Draw mascots still and editing files as a static tint, without the shimmer",
       "default": false
+    },
+    "desktopCellWidth": {
+      "type": "number",
+      "title": "Desktop column width (px)",
+      "description": "How many CSS pixels one pane column is in the Desktop app; the pixel-drawn parts are sized from it",
+      "default": 8
     }
   }
 }
