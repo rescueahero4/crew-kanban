@@ -4,7 +4,7 @@
 
 **See your whole crew at a glance: every agent in your Claude session, what it's doing, which files it's touching, and where each task stands.**
 
-[![Version](https://img.shields.io/badge/version-0.2.0-d77757?style=for-the-badge)](mod/crew-kanban/.claude-plugin/plugin.json)
+[![Version](https://img.shields.io/badge/version-0.2.1-d77757?style=for-the-badge)](mod/crew-kanban/.claude-plugin/plugin.json)
 [![Claude Code mod](https://img.shields.io/badge/Claude_Code-mod-black?style=for-the-badge)](#setup)
 [![Session-scoped](https://img.shields.io/badge/data-session--scoped-6b4fc8?style=for-the-badge)](#reference)
 
