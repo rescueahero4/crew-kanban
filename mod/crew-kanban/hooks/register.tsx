@@ -2,14 +2,16 @@
 // The band above the prompt sums the crew up and opens the Crew pane; /crew opens it too.
 // Everything is kept in $.state, so it lasts for the session and nothing outlives it.
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, ToolCallResult } from 'claude-code'
 
-import type { Agent, Crew, Layout, Look, Nav, Part } from '../types'
+import type { Agent, Crew, Layout, Look, Nav, Part, Task } from '../types'
 import { LIBRARY, isValidPart } from './mascot'
 import {
+  BOARD_TOOL,
   MAIN,
   addEdit,
   addEntry,
+  applyBoard,
   applyTaskTool,
   deletedBy,
   describe,
@@ -21,7 +23,7 @@ import {
   weightOf,
   windowOf,
 } from './model'
-import { ROLES, provisionalLook, roleOf } from './theme'
+import { DEFAULT_LANES, LANE_COLORS, ROLES, provisionalLook, roleOf } from './theme'
 import { band, crewPane, isFolderOpen, mascotCells, type Ctx, type Tree } from './views'
 
 const PANE = 'crew'
@@ -37,6 +39,46 @@ const looksAtom = atom({ plugin: 'crew-kanban', key: 'looks' } as const, {} as R
 const LINGER_MS = 2500
 const TASK_TOOLS = new Set(['TaskCreate', 'TaskUpdate', 'TodoWrite'])
 const SKIP_DIRS = new Set(['.git', 'node_modules'])
+
+// The tool every agent in the session moves work across the board with
+const BOARD = {
+  name: 'kanban',
+  isDeferred: false,
+  description: [
+    "This session's Kanban board: the tasks the agents are working on, listed by lane. The person watches it in the Crew pane, so keep it true to where the work stands.",
+    'Default lanes: planning (being scoped or designed), backlog (ready, not started), in_progress (being worked now), in_review (built; being reviewed, tested or awaiting sign-off), blocked (waiting on something; say what in the note), done.',
+    "Move a task whenever its state changes, using your judgement: into in_review once you've built it and it needs checking, back to in_progress if review sends it back, into blocked with a note when you're stuck on something outside your control. Add a lane (add_lane) when the work has a step the defaults lack, such as qa or rework.",
+    'Tasks written with TaskCreate/TaskUpdate or TodoWrite are on the board too (T-01, ...); this tool adds its own (K-01, ...) and can move either kind.',
+    'Actions: list; add {title, lane?, assignee?, note?}; update {task, lane?, title?, assignee?, note?}; remove {task}; add_lane {label, after?, color?, hint?}; remove_lane {lane, into?}. A task is named by its id; an assignee by agent name or type, "me", or "none".',
+  ].join('\n'),
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: { type: 'string', enum: ['list', 'add', 'update', 'remove', 'add_lane', 'remove_lane'] },
+      task: { type: 'string', description: 'The task id, e.g. T-03 or K-01 (update, remove)' },
+      title: { type: 'string', description: "The task's title (add; update renames)" },
+      lane: { type: 'string', description: 'Lane id or label, e.g. in_review (add, update, remove_lane)' },
+      assignee: { type: 'string', description: 'Agent name or type, "me", or "none"' },
+      note: { type: 'string', description: 'Why the task sits where it does, e.g. what blocks it; "" clears it' },
+      label: { type: 'string', description: "The new lane's label (add_lane)" },
+      after: { type: 'string', description: 'The lane the new one goes after; default just before done (add_lane)' },
+      hint: { type: 'string', description: 'What a task in the new lane means (add_lane)' },
+      color: { type: 'string', description: "The new lane's colour as #rrggbb (add_lane)" },
+      into: { type: 'string', description: "The lane a removed lane's tasks move to; default backlog (remove_lane)" },
+    },
+    required: ['action'],
+  },
+}
+
+// Told to every agent's requests, so the board is kept without the person asking
+const BOARD_PROMPT = {
+  id: 'crew-kanban:board',
+  scope: 'session' as const,
+  text: [
+    '# Kanban board',
+    `This session shows the person a Kanban board of the agents' tasks. When you plan or take on work of more than one step, put its tasks on the board (${BOARD_TOOL}, or TaskCreate/TodoWrite) and move each task between lanes as its state changes: planning, backlog, in_progress, in_review, blocked, done, or a lane you add when the work needs one. A subagent moves the tasks it was given; the lead keeps the rest current.`,
+  ].join('\n'),
+}
 
 // Set from the mod's options when it loads
 let isReduced = false
@@ -64,6 +106,14 @@ const lookFor = (looks: Record<string, Look>) => (agent: Agent): Look => {
 }
 const partsFor = (generated: Record<string, Part>) => (look: Look): Part[] =>
   look.parts.map(id => LIBRARY[id] ?? generated[id]).filter((p): p is Part => !!p)
+
+// A task as an earlier version of the mod kept it, with a status of planning, in_progress or done
+function laneTask(task: Task): Task {
+  const old = task as Task & { status?: string }
+  if (old.lane) return task
+  const { status, ...rest } = old
+  return { ...rest, lane: status === 'planning' ? 'backlog' : (status ?? 'backlog'), source: rest.source ?? 'task' }
+}
 
 // Keeps an open log where the person scrolled it as entries arrive for it
 async function holdScroll($: EngineInterface, agentId: string, taskId?: string) {
@@ -174,6 +224,18 @@ async function animate($: EngineInterface) {
   }
 }
 
+// One kanban tool call: the board changes in the crew, and the model reads back what changed
+async function serveBoard($: EngineInterface, input: Record<string, unknown>, agentId: string): Promise<ToolCallResult> {
+  const at = await $.clock.now()
+  let reply = { text: '', isError: undefined as true | undefined }
+  await update($, crewAtom, crew => {
+    const r = applyBoard(crew, input, agentId, at, LANE_COLORS)
+    reply = { text: r.text, isError: r.isError }
+    return r.crew
+  })
+  return reply.isError ? { isError: true as const, result: reply.text, text: reply.text } : { result: reply.text }
+}
+
 async function open($: EngineInterface) {
   await update($, openAtom, () => true)
   const opened = await $.ui.open({ id: PANE, title: 'Crew', focus: true })
@@ -222,13 +284,26 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'crew', description: 'Open the Crew pane: agents, tasks, edits and activity', immediate: true })
-    // A reload starts with no write in flight
-    await update($, crewAtom, c => ({ ...c, editing: {} }))
+    // A reload starts with no write in flight, and takes a board an earlier version of the mod kept
+    await update($, crewAtom, c => ({
+      ...c,
+      editing: {},
+      lanes: c.lanes?.length ? c.lanes : DEFAULT_LANES,
+      boardSeq: c.boardSeq ?? 0,
+      tasks: c.tasks.map(laneTask),
+    }))
+    await $.tool.register(BOARD)
     await poll($).catch(() => undefined)
     $.clock.every(1000, () => void poll($).catch(() => undefined))
     $.clock.every(250, () => void animate($).catch(() => undefined))
     return next(e)
   })
+
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    if (!e.tools.includes(BOARD_TOOL)) return composed
+    return { sections: [...composed.sections.filter(s => s.id !== BOARD_PROMPT.id), BOARD_PROMPT] }
+  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'crew' }, async $ => {
     await open($)
@@ -301,14 +376,15 @@ export const register: Register = (on, options) => {
     })
     await holdScroll($, agentId, written.agents[agentId]?.taskId)
 
-    const ran = await next(e)
+    // The board's own tool: answered here, from the crew, with nothing beneath to run
+    const ran = tool === BOARD_TOOL ? await serveBoard($, input, agentId) : await next(e)
 
     const isOk = ran.deny === undefined && ran.isError !== true
     const done = await $.clock.now()
     await update($, crewAtom, crew => {
       let c = crew
       if (said?.path && said.change && isOk) c = addEdit(c, agentId, said.path, said.change)
-      if (TASK_TOOLS.has(tool) && isOk) c = applyTaskTool(c, tool, input, ran.result ?? ran.text, agentId)
+      if (TASK_TOOLS.has(tool) && isOk) c = applyTaskTool(c, tool, input, ran.result ?? ran.text, agentId, done)
       if ((tool === 'Bash' || tool === 'PowerShell') && isOk && typeof input.command === 'string') {
         for (const path of deletedBy(input.command, c.root)) c = addEdit(c, agentId, path, 'deleted')
       }

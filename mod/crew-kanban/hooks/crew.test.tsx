@@ -1,6 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { applyTaskTool, describe as said, emptyCrew, newAgent } from './model'
+import { BOARD_TOOL, applyBoard, applyTaskTool, describe as said, emptyCrew, newAgent } from './model'
+import { LANE_COLORS } from './theme'
+import type { Crew } from '../types'
 
 const PANE = {
   title: 'Crew',
@@ -35,8 +37,79 @@ test('a task started by an agent is assigned to it and tags its entries', async 
   crew = { ...crew, agents: { a1: newAgent('a1', 'Explore', 'look', 0, 0) } }
   crew = applyTaskTool(crew, 'TaskCreate', { subject: 'Plan checks' }, 'Task #3 created', 'a1')
   crew = applyTaskTool(crew, 'TaskUpdate', { taskId: '3', status: 'in_progress' }, '', 'a1')
-  expect(crew.tasks[0]).toMatchObject({ id: 'T-03', status: 'in_progress', assignee: 'a1' })
+  expect(crew.tasks[0]).toMatchObject({ id: 'T-03', lane: 'in_progress', assignee: 'a1' })
   expect(crew.agents.a1?.taskId).toBe('T-03')
+})
+
+test('an agent moves tasks across lanes, adds lanes, and is told what it got wrong', async () => {
+  let crew: Crew = { ...emptyCrew(), agents: { a1: { ...newAgent('a1', 'reviewer', 'check', 0, 0), name: 'rev' } } }
+  const call = (input: Record<string, unknown>) => {
+    const r = applyBoard(crew, input, 'a1', 5, LANE_COLORS)
+    crew = r.crew
+    return r
+  }
+  expect(call({ action: 'add', title: 'Write the spec', lane: 'Planning' }).text).toBe('Added K-01 "Write the spec" to Planning.')
+  expect(call({ action: 'update', task: '1', lane: 'in-progress' }).text).toBe('Moved K-01 to In Progress.')
+  // Starting it assigns the caller and tags its entries with it
+  expect(crew.tasks[0]).toMatchObject({ lane: 'in_progress', assignee: 'a1', movedBy: 'a1' })
+  expect(crew.agents.a1?.taskId).toBe('K-01')
+  call({ action: 'update', task: 'K-01', lane: 'blocked', note: 'waiting for CI' })
+  expect(crew.tasks[0]).toMatchObject({ lane: 'blocked', note: 'waiting for CI' })
+  expect(crew.agents.a1?.taskId).toBeUndefined()
+
+  // A lane the defaults lack is added before Done, and a move to it drops the old note
+  expect(call({ action: 'update', task: 'K-01', lane: 'qa' }).isError).toBe(true)
+  call({ action: 'add_lane', label: 'QA', hint: 'tested by a person' })
+  expect(crew.lanes.map(l => l.id).slice(-2)).toEqual(['qa', 'done'])
+  call({ action: 'update', task: 'K-01', lane: 'QA' })
+  expect(crew.tasks[0]).toMatchObject({ lane: 'qa', note: undefined })
+  expect(call({ action: 'list' }).text).toContain('## QA [qa] (1)')
+
+  // Removing a lane moves its tasks rather than losing them
+  expect(call({ action: 'remove_lane', lane: 'qa', into: 'in_review' }).text).toBe('Removed lane QA; its 1 task moved to In Review.')
+  expect(crew.tasks[0]?.lane).toBe('in_review')
+  expect(call({ action: 'update', task: 'K-09' }).isError).toBe(true)
+  expect(call({ action: 'update', task: 'K-01', assignee: 'nobody-by-this-name' }).isError).toBe(true)
+  call({ action: 'update', task: 'K-01', assignee: 'none' })
+  expect(crew.tasks[0]?.assignee).toBeUndefined()
+})
+
+test('a TodoWrite that repeats a status keeps the lane an agent gave it, and the board tasks', async () => {
+  let crew: Crew = { ...emptyCrew(), agents: { main: newAgent('main', 'main', 'lead', 0, 0) } }
+  const todos = (status: string) => ({ todos: [{ content: 'Build it', status }] })
+  crew = applyTaskTool(crew, 'TodoWrite', todos('in_progress'), '', 'main')
+  crew = applyBoard(crew, { action: 'update', task: 'T-01', lane: 'in_review' }, 'main', 1, LANE_COLORS).crew
+  crew = applyBoard(crew, { action: 'add', title: 'Docs' }, 'main', 2, LANE_COLORS).crew
+  crew = applyTaskTool(crew, 'TodoWrite', todos('in_progress'), '', 'main')
+  expect(crew.tasks.map(t => [t.id, t.lane])).toEqual([['K-01', 'backlog'], ['T-01', 'in_review']])
+  crew = applyTaskTool(crew, 'TodoWrite', todos('completed'), '', 'main')
+  expect(crew.tasks.find(t => t.id === 'T-01')?.lane).toBe('done')
+})
+
+test('the kanban tool is answered from the board, and the board draws its lanes', async ($, on) => {
+  mock.clock(on)
+  on('tool.call', async () => ({ result: 'Task #1 created', text: 'ok' }))
+  on('ui.render', async ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return Box({})
+  })
+  const added = await $.tool.call({ tool: BOARD_TOOL, action: 'add', title: 'Review the PR', lane: 'in_review', note: 'needs a second pair of eyes' } as never)
+  expect(added.result).toBe('Added K-01 "Review the PR" to In Review.')
+  const wrong = await $.tool.call({ tool: BOARD_TOOL, action: 'update', task: 'K-01', lane: 'nowhere' } as never)
+  expect(wrong.isError).toBe(true)
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'crew-kanban', surface, component: 'Pane', props: PANE, requestId: 'crew' })
+    await ui.press({ key: 'tab-kanban' })
+    expect(await shows(ui, /In Review/)).toBe(true)
+    expect(await shows(ui, /Backlog/)).toBe(true)
+    expect(await ui.find({ key: 'open-K-01' })).toBeDefined()
+    expect(await shows(ui, /needs a second pair of eyes/)).toBe(true)
+    await ui.press({ key: 'open-K-01' })
+    expect(await shows(ui, /Review the PR/)).toBe(true)
+    await ui.press({ key: 'back' })
+    await ui.unmount()
+  }
 })
 
 test('the band and every screen of the pane draw on terminal and desktop', async ($, on) => {

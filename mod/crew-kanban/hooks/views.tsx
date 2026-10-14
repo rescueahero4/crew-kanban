@@ -2,7 +2,7 @@
 // desktop.tsx to the mockup's pixels; here it's the terminal's version: the mockup's order, spacing,
 // colours and words on a grid of cells, a Button for everything the mockup made clickable.
 import type { Agent, Crew, Entry, Layout, Look, Nav, Part, Status, Task } from '../types'
-import { CHANGE, C, KIND, RAW_LABEL, STATUSES, fmtClock, fmtEffort, fmtModel, fmtTime, fmtTokens, statusOf, tint } from './theme'
+import { CHANGE, C, KIND, RAW_LABEL, STATUSES, fmtClock, fmtEffort, fmtModel, fmtTime, fmtTokens, laneOf, statusOf, tint } from './theme'
 import { activityOf, agentsIn, isInProject, progressOf } from './model'
 import { compose, frameOf, rasterCells, shrink, svgOf } from './mascot'
 import { desktopPane } from './desktop'
@@ -34,7 +34,7 @@ export type Ctx = {
   act: {
     go: (nav: Nav) => void
     back: () => void
-    toggleGroup: (status: Status) => void
+    toggleGroup: (lane: string) => void
     toggleFolder: (path: string, isOpen: boolean) => void
     split: (delta: number | 'reset') => void
     scrollLog: (delta: number | 'latest') => void
@@ -242,20 +242,27 @@ function assigneeChip(ctx: Ctx, agent: Agent | undefined, key: string) {
 
 function taskRow(ctx: Ctx, task: Task) {
   const { Box, Text, Button } = ctx.els
-  const isDone = task.status === 'done'
+  const isDone = task.lane === 'done'
   const agent = task.assignee ? ctx.crew.agents[task.assignee] : undefined
   const isReflow = ctx.cols < BREAK.reflow
   return (
     <Box key={'task-' + task.id} flexDirection="row" columnGap={1} paddingX={1}>
       {!isReflow && <Box width={5} flexShrink={0}><Text color={C.dim}>{task.id}</Text></Box>}
-      <Box flexGrow={1} flexShrink={1}>
+      <Box flexGrow={1} flexShrink={1} flexDirection="column">
         <Button key={'open-' + task.id} plain label={task.title} onPress={() => ctx.act.go({ view: 'task', id: task.id, from: 'kanban' })}>
           <Text color={isDone ? C.muted : C.text}>{task.title}</Text>
         </Button>
+        {task.note && <Text color={laneOf(ctx.crew.lanes, task.lane).color} wrap="truncate-end">↳ {task.note}</Text>}
       </Box>
       <Box flexShrink={0}>{assigneeChip(ctx, agent, 'chip-' + task.id)}</Box>
     </Box>
   )
+}
+
+// The board's lanes, then a lane for any task whose lane an agent removed from under it
+export function lanesShown(ctx: Pick<Ctx, 'crew'>) {
+  const stray = [...new Set(ctx.crew.tasks.map(t => t.lane).filter(id => !ctx.crew.lanes.some(l => l.id === id)))]
+  return [...ctx.crew.lanes, ...stray.map(id => laneOf(ctx.crew.lanes, id))]
 }
 
 function kanbanView(ctx: Ctx) {
@@ -263,27 +270,23 @@ function kanbanView(ctx: Ctx) {
   if (!ctx.crew.tasks.length) return <Box justifyContent="center" paddingY={2}><Text color={C.muted}>No tasks in this crew yet.</Text></Box>
   return (
     <Box flexDirection="column">
-      {STATUSES.map(st => {
-        const tasks = ctx.crew.tasks.filter(t => t.status === st.id)
-        const isCollapsed = !!ctx.layout.collapsed[st.id]
+      {lanesShown(ctx).map(st => {
+        const tasks = ctx.crew.tasks.filter(t => t.lane === st.id)
+        // An empty lane is its heading alone: six dashed "No tasks" boxes would bury the work
+        const isCollapsed = !!ctx.layout.collapsed[st.id] || !tasks.length
         return (
           <Box key={'tg-' + st.id} flexDirection="column" marginTop={1}>
             <Button key={'toggle-' + st.id} plain label={st.label} onPress={() => ctx.act.toggleGroup(st.id)}>
-              <Text color={C.dim}>{isCollapsed ? '› ' : '⌄ '}</Text>
-              <Text color={st.color}>● {st.label} </Text>
+              <Text color={C.dim}>{!tasks.length ? '  ' : isCollapsed ? '› ' : '⌄ '}</Text>
+              <Text color={tasks.length ? st.color : C.dim}>● {st.label} </Text>
               <Text color={C.dim}>{tasks.length}</Text>
             </Button>
-            {!isCollapsed &&
-              (tasks.length ? (
-                // .task-list: one card, rows split by hairlines
-                <Box flexDirection="column" borderStyle="round" borderColor={C.border}>
-                  {tasks.flatMap((t, i) => [...(i ? [rule(ctx, ctx.cols - 2, C.border)] : []), taskRow(ctx, t)])}
-                </Box>
-              ) : (
-                <Box borderStyle="dashed" borderColor={C.border} justifyContent="center">
-                  <Text color={C.dim}>No tasks</Text>
-                </Box>
-              ))}
+            {!isCollapsed && (
+              // .task-list: one card, rows split by hairlines
+              <Box flexDirection="column" borderStyle="round" borderColor={C.border}>
+                {tasks.flatMap((t, i) => [...(i ? [rule(ctx, ctx.cols - 2, C.border)] : []), taskRow(ctx, t)])}
+              </Box>
+            )}
           </Box>
         )
       })}
@@ -554,7 +557,8 @@ function taskDetail(ctx: Ctx, task: Task | undefined) {
   // Chips for every agent with activity on the task, assignee first
   const ids = [...new Set([task.assignee, ...entries.map(e => e.agentId)].filter(Boolean))] as string[]
   const agents = ids.map(id => ctx.crew.agents[id]).filter(Boolean) as Agent[]
-  const isLive = task.status === 'in_progress'
+  const isLive = task.lane === 'in_progress'
+  const lane = laneOf(ctx.crew.lanes, task.lane)
   return (
     <Box flexDirection="column">
       {backLink(ctx)}
@@ -562,9 +566,10 @@ function taskDetail(ctx: Ctx, task: Task | undefined) {
         <Box flexDirection="column" paddingX={1} paddingY={1}>
           <Text>
             <Text color={C.dim}>{task.id}  </Text>
-            {statusLabel(ctx, task.status)}
+            <Text color={lane.color}>● {lane.label}</Text>
           </Text>
           <Text bold color={C.text}>{task.title}</Text>
+          {task.note && <Text color={lane.color}>↳ {task.note}</Text>}
           <Box flexDirection="row" columnGap={1} flexWrap="wrap" marginTop={1}>
             {agents.length ? agents.map(a => assigneeChip(ctx, a, 'tchip-' + a.id)) : assigneeChip(ctx, undefined, 'tchip-none')}
           </Box>
@@ -623,7 +628,7 @@ export function band(ctx: Pick<Ctx, 'els' | 'cols' | 'crew'> & { isOpen: boolean
       {isMid && tasks.length > 0 && (
         <Text>
           <Text color={C.muted}>Tasks </Text>
-          {tasks.filter(t => t.status === 'done').length}/{tasks.length}
+          {tasks.filter(t => t.lane === 'done').length}/{tasks.length}
         </Text>
       )}
       {isWide && (

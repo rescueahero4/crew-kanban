@@ -1,13 +1,18 @@
 // The session's crew as plain data, and the pure steps that change it. The hooks module feeds these
 // from tool calls, model requests and the agent roster; the views only read.
-import type { Agent, Change, Crew, Entry, LogKind, Status, Task } from '../types'
+import type { Agent, Change, Crew, Entry, Lane, LogKind, Status, Task } from '../types'
+import { DEFAULT_LANES, laneOf } from './theme'
 
 export const MAIN = 'main'
+// The kanban tool this mod registers, as the model calls it
+export const BOARD_TOOL = 'mcp__crew-kanban__kanban'
 const LOG_CAP = 2000
 
 export const emptyCrew = (): Crew => ({
   agents: {},
   tasks: [],
+  lanes: DEFAULT_LANES,
+  boardSeq: 0,
   log: [],
   editing: {},
   tools: 0,
@@ -115,6 +120,15 @@ export function describe(tool: string, input: Record<string, unknown>, root: str
       return { kind: 'message', text: 'Used skill ' + str('skill') }
     case 'AskUserQuestion':
       return { kind: 'message', text: 'Asked the user a question' }
+    case BOARD_TOOL: {
+      const action = str('action') || 'list'
+      if (action === 'list') return { kind: 'read', text: 'Read the board' }
+      if (action === 'add') return { kind: 'message', text: 'Added task: ' + clip(str('title'), 60) + (str('lane') ? ' → ' + str('lane') : '') }
+      if (action === 'update') return { kind: 'message', text: `Task ${str('task')} ${str('lane') ? '→ ' + str('lane').replace(/_/g, ' ') : 'updated'}` }
+      if (action === 'remove') return { kind: 'message', text: `Removed task ${str('task')}` }
+      if (action === 'add_lane') return { kind: 'message', text: 'Added lane ' + clip(str('label') || str('lane'), 40) }
+      return { kind: 'message', text: 'Removed lane ' + clip(str('lane'), 40) }
+    }
     default:
       if (tool.startsWith('mcp__')) return { kind: 'run', text: 'Called ' + tool.split('__').slice(1).join(' · ') }
       return { kind: 'run', text: 'Used ' + tool }
@@ -157,34 +171,46 @@ export function setEditing(crew: Crew, path: string, agentId: string, isOn: bool
   return { ...crew, editing }
 }
 
-const TASK_STATUS: Record<string, Status> = {
-  pending: 'planning',
-  open: 'planning',
+// Claude's task statuses as lanes: a task its tools list but nobody has started waits in the Backlog
+const TOOL_LANE: Record<string, string> = {
+  pending: 'backlog',
+  open: 'backlog',
   in_progress: 'in_progress',
   completed: 'done',
   done: 'done',
 }
 
-const pad = (n: string) => (/^\d+$/.test(n) ? 'T-' + n.padStart(2, '0') : n)
+const pad = (n: string, prefix = 'T-') => (/^\d+$/.test(n) ? prefix + n.padStart(2, '0') : n)
+
+// The agent that starts a task is working it: its entries are tagged until it moves the task on
+function tagAgent(crew: Crew, agentId: string | undefined, task: Task): Crew {
+  const agent = agentId ? crew.agents[agentId] : undefined
+  if (!agent) return crew
+  if (task.lane === 'in_progress') return { ...crew, agents: { ...crew.agents, [agent.id]: { ...agent, taskId: task.id } } }
+  if (agent.taskId === task.id) return { ...crew, agents: { ...crew.agents, [agent.id]: { ...agent, taskId: undefined } } }
+  return crew
+}
+
+// An agent named as the model would name it: its name, id or type, or "me" for the caller
+function agentNamed(crew: Crew, who: string, caller: string): string | undefined {
+  const w = who.trim().toLowerCase()
+  if (!w) return undefined
+  if (w === 'me' || w === 'self') return caller
+  if (w === 'lead' || w === 'main') return MAIN
+  const all = Object.values(crew.agents)
+  return (all.find(a => a.id.toLowerCase() === w || a.name?.toLowerCase() === w) ?? all.find(a => a.type.toLowerCase() === w))?.id
+}
 
 // The task list as Claude keeps it (TaskCreate / TaskUpdate, or TodoWrite), with who is working what
-export function applyTaskTool(crew: Crew, tool: string, input: Record<string, unknown>, result: unknown, agentId: string): Crew {
+export function applyTaskTool(crew: Crew, tool: string, input: Record<string, unknown>, result: unknown, agentId: string, at = 0): Crew {
   const str = (k: string) => (typeof input[k] === 'string' ? (input[k] as string) : '')
-  const assign = (c: Crew, task: Task, status: Status): Crew => {
-    const agent = c.agents[agentId]
-    if (!agent) return c
-    // The agent that starts a task is working it: its entries are tagged until it finishes
-    if (status === 'in_progress') return { ...c, agents: { ...c.agents, [agentId]: { ...agent, taskId: task.id } } }
-    if (agent.taskId === task.id) return { ...c, agents: { ...c.agents, [agentId]: { ...agent, taskId: undefined } } }
-    return c
-  }
 
   if (tool === 'TaskCreate') {
     const text = typeof result === 'string' ? result : JSON.stringify(result ?? '')
     const found = text.match(/"(?:id|taskId)"\s*:\s*"?(\d+)/) ?? text.match(/#(\d+)/)
     const id = pad(found?.[1] ?? String(crew.tasks.length + 1))
     if (crew.tasks.some(t => t.id === id)) return crew
-    const task: Task = { id, title: str('subject') || str('title') || str('description'), status: 'planning' }
+    const task: Task = { id, title: str('subject') || str('title') || str('description'), lane: 'backlog', source: 'task', toolStatus: 'pending' }
     return { ...crew, tasks: [...crew.tasks, task] }
   }
 
@@ -194,38 +220,189 @@ export function applyTaskTool(crew: Crew, tool: string, input: Record<string, un
     if (raw === 'deleted') return { ...crew, tasks: crew.tasks.filter(t => t.id !== id) }
     let task = crew.tasks.find(t => t.id === id)
     if (!task) return crew
-    const status = TASK_STATUS[raw] ?? task.status
-    const owner = str('owner')
-    const ownerId = owner ? Object.values(crew.agents).find(a => a.name === owner || a.id === owner)?.id : undefined
+    // A status the tool names is a move; an update without one leaves the task where the board has it
+    const lane = TOOL_LANE[raw] ?? task.lane
+    const ownerId = str('owner') ? agentNamed(crew, str('owner'), agentId) : undefined
     task = {
       ...task,
       title: str('subject') || task.title,
-      status,
-      assignee: ownerId ?? (status === 'in_progress' && !task.assignee ? agentId : task.assignee),
+      lane,
+      toolStatus: raw || task.toolStatus,
+      assignee: ownerId ?? (lane === 'in_progress' && !task.assignee ? agentId : task.assignee),
+      ...(raw && lane !== task.lane ? { movedBy: agentId, movedAt: at, note: undefined } : {}),
     }
     const next = { ...crew, tasks: crew.tasks.map(t => (t.id === id ? task! : t)) }
-    return raw ? assign(next, task, status) : next
+    return raw ? tagAgent(next, agentId, task) : next
   }
 
   if (tool === 'TodoWrite' && Array.isArray(input.todos)) {
     let next: Crew = crew
-    const tasks = (input.todos as Record<string, unknown>[]).map((todo, i) => {
+    // The list replaces the todos it wrote before; tasks from TaskCreate or the board stay
+    const kept = crew.tasks.filter(t => t.source !== 'todo')
+    const taken = new Set(kept.map(t => t.id))
+    let n = 0
+    const todos = (input.todos as Record<string, unknown>[]).map(todo => {
       const title = String(todo.content ?? todo.subject ?? '')
-      const prior = crew.tasks.find(t => t.title === title)
-      const status = TASK_STATUS[String(todo.status)] ?? 'planning'
+      const raw = String(todo.status ?? 'pending')
+      const prior = crew.tasks.find(t => t.source === 'todo' && t.title === title)
+      // The same status as last time is no move: a lane an agent gave it on the board holds
+      const lane = prior && prior.toolStatus === raw ? prior.lane : (TOOL_LANE[raw] ?? 'backlog')
+      let id = prior?.id
+      while (!id || taken.has(id)) id = pad(String(++n))
+      taken.add(id)
       const task: Task = {
-        id: prior?.id ?? pad(String(i + 1)),
+        ...prior,
+        id,
         title,
-        status,
-        assignee: prior?.assignee ?? (status !== 'planning' ? agentId : undefined),
+        lane,
+        source: 'todo',
+        toolStatus: raw,
+        assignee: prior?.assignee ?? (lane === 'in_progress' ? agentId : undefined),
       }
-      if (status === 'in_progress') next = assign(next, task, status)
+      if (lane === 'in_progress' && prior?.lane !== 'in_progress') next = tagAgent(next, agentId, task)
       return task
     })
-    return { ...next, tasks }
+    return { ...next, tasks: [...kept, ...todos] }
   }
 
   return crew
+}
+
+// ── The kanban tool: how an agent reads the board and moves work across it ──────────
+
+export type BoardReply = { crew: Crew; text: string; isError?: true }
+
+const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+
+// A lane named as the model would name it: its id, its label, or either loosely spelt ("In review", "in-review")
+export function laneNamed(lanes: Lane[], name: string): Lane | undefined {
+  const s = slug(name)
+  return s ? lanes.find(l => l.id === s || slug(l.label) === s) : undefined
+}
+
+// A task named by its id ("T-03", "3", "#3", "k-1") or its exact title
+export function taskNamed(tasks: Task[], name: string): Task | undefined {
+  const n = name.trim().replace(/^#/, '')
+  if (!n) return undefined
+  const up = n.toUpperCase()
+  const num = up.match(/^(?:([A-Z])-?)?0*(\d+)$/)
+  const sameNumber = (t: Task) => {
+    const m = t.id.match(/^([A-Z])-0*(\d+)$/)
+    return !!num && !!m && m[2] === num[2] && (!num[1] || m[1] === num[1])
+  }
+  return tasks.find(t => t.id.toUpperCase() === up) ?? tasks.find(sameNumber) ?? tasks.find(t => t.title.trim().toLowerCase() === n.toLowerCase())
+}
+
+// The board as the model reads it: each lane, then its tasks with who has them and why they sit there
+export function boardText(crew: Crew): string {
+  const who = (id?: string) => {
+    const a = id ? crew.agents[id] : undefined
+    return a ? ` @${a.name ?? (a.id === MAIN ? 'lead' : a.type)}` : ''
+  }
+  const out = crew.lanes.map(lane => {
+    const tasks = crew.tasks.filter(t => t.lane === lane.id)
+    const head = `## ${lane.label} [${lane.id}] (${tasks.length})${lane.hint ? ' — ' + lane.hint : ''}`
+    return [head, ...tasks.map(t => `- ${t.id} ${t.title}${who(t.assignee)}${t.note ? ' — ' + t.note : ''}`)].join('\n')
+  })
+  const stray = crew.tasks.filter(t => !crew.lanes.some(l => l.id === t.lane))
+  if (stray.length) out.push(['## Unsorted', ...stray.map(t => `- ${t.id} ${t.title} [${t.lane}]`)].join('\n'))
+  return out.join('\n\n')
+}
+
+// One call of the kanban tool, applied to the crew; the reply is what the model reads back
+export function applyBoard(crew: Crew, input: Record<string, unknown>, agentId: string, at: number, colors: string[]): BoardReply {
+  const str = (k: string) => (typeof input[k] === 'string' ? (input[k] as string).trim() : '')
+  const fail = (text: string): BoardReply => ({ crew, text, isError: true })
+  const lanesList = () => crew.lanes.map(l => l.id).join(', ')
+  const action = str('action') || 'list'
+
+  if (action === 'list') return { crew, text: boardText(crew) }
+
+  if (action === 'add' || action === 'update') {
+    const laneName = str('lane')
+    const lane = laneName ? laneNamed(crew.lanes, laneName) : undefined
+    if (laneName && !lane) return fail(`No lane "${laneName}". Lanes: ${lanesList()}. Add one with action "add_lane" first.`)
+    const whoName = str('assignee')
+    const isUnassigning = ['none', 'nobody', 'unassigned'].includes(whoName.toLowerCase())
+    const assignee = whoName && !isUnassigning ? agentNamed(crew, whoName, agentId) : undefined
+    if (whoName && !isUnassigning && !assignee) return fail(`No agent "${whoName}". Name an agent by its name or type, "me", or "none".`)
+    const hasNote = typeof input.note === 'string'
+    const note = hasNote ? str('note') || undefined : undefined
+
+    if (action === 'add') {
+      const title = str('title')
+      if (!title) return fail('"add" needs a title.')
+      const seq = crew.boardSeq + 1
+      const target = lane?.id ?? (crew.lanes.some(l => l.id === 'backlog') ? 'backlog' : crew.lanes[0]!.id)
+      const task: Task = {
+        id: pad(String(seq), 'K-'),
+        title,
+        lane: target,
+        assignee: assignee ?? (target === 'in_progress' && !isUnassigning ? agentId : undefined),
+        note,
+        source: 'board',
+        movedBy: agentId,
+        movedAt: at,
+      }
+      const next = tagAgent({ ...crew, boardSeq: seq, tasks: [...crew.tasks, task] }, task.assignee, task)
+      return { crew: next, text: `Added ${task.id} "${task.title}" to ${laneOf(next.lanes, task.lane).label}.` }
+    }
+
+    const task = taskNamed(crew.tasks, str('task'))
+    if (!task) return fail(`No task "${str('task')}". Call with action "list" to see the board.`)
+    const isMoved = !!lane && lane.id !== task.lane
+    const updated: Task = {
+      ...task,
+      title: str('title') || task.title,
+      lane: lane?.id ?? task.lane,
+      // A move without a note drops the old one: "waiting for CI" means nothing once it's in review
+      note: hasNote ? note : isMoved ? undefined : task.note,
+      assignee: isUnassigning ? undefined : (assignee ?? (lane?.id === 'in_progress' && !task.assignee ? agentId : task.assignee)),
+      ...(isMoved ? { movedBy: agentId, movedAt: at } : {}),
+    }
+    let next: Crew = { ...crew, tasks: crew.tasks.map(t => (t.id === task.id ? updated : t)) }
+    if (isMoved) next = tagAgent(next, updated.assignee ?? agentId, updated)
+    const what = isMoved ? `Moved ${task.id} to ${laneOf(next.lanes, updated.lane).label}` : `Updated ${task.id}`
+    return { crew: next, text: `${what}${updated.note ? ` (${updated.note})` : ''}.` }
+  }
+
+  if (action === 'remove') {
+    const task = taskNamed(crew.tasks, str('task'))
+    if (!task) return fail(`No task "${str('task')}". Call with action "list" to see the board.`)
+    const agents = Object.fromEntries(Object.entries(crew.agents).map(([id, a]) => [id, a.taskId === task.id ? { ...a, taskId: undefined } : a]))
+    return { crew: { ...crew, agents, tasks: crew.tasks.filter(t => t.id !== task.id) }, text: `Removed ${task.id} "${task.title}".` }
+  }
+
+  if (action === 'add_lane') {
+    const label = str('label') || str('lane')
+    if (!label) return fail('"add_lane" needs a label.')
+    const id = slug(label)
+    if (!id) return fail(`"${label}" has no letters or digits to name a lane by.`)
+    const prior = laneNamed(crew.lanes, label)
+    if (prior) return { crew, text: `Lane ${prior.label} [${prior.id}] is already on the board.` }
+    const color = /^#[0-9a-f]{6}$/i.test(str('color')) ? str('color') : colors[crew.lanes.filter(l => l.isCustom).length % colors.length]!
+    const lane: Lane = { id, label, color, hint: str('hint') || undefined, isCustom: true }
+    // After the lane it names; else just before Done, where most workflow steps belong
+    const after = str('after') ? laneNamed(crew.lanes, str('after')) : undefined
+    const done = crew.lanes.findIndex(l => l.id === 'done')
+    const index = after ? crew.lanes.indexOf(after) + 1 : done >= 0 ? done : crew.lanes.length
+    const lanes = [...crew.lanes.slice(0, index), lane, ...crew.lanes.slice(index)]
+    return { crew: { ...crew, lanes }, text: `Added lane ${label} [${id}].` }
+  }
+
+  if (action === 'remove_lane') {
+    const lane = laneNamed(crew.lanes, str('lane'))
+    if (!lane) return fail(`No lane "${str('lane')}". Lanes: ${lanesList()}.`)
+    if (crew.lanes.length === 1) return fail('The board needs at least one lane.')
+    const rest = crew.lanes.filter(l => l !== lane)
+    const into = str('into') ? laneNamed(rest, str('into')) : (rest.find(l => l.id === 'backlog') ?? rest[0])
+    if (!into) return fail(`No lane "${str('into')}" to move its tasks into. Lanes: ${rest.map(l => l.id).join(', ')}.`)
+    const n = crew.tasks.filter(t => t.lane === lane.id).length
+    const tasks = crew.tasks.map(t => (t.lane === lane.id ? { ...t, lane: into.id } : t))
+    return { crew: { ...crew, lanes: rest, tasks }, text: `Removed lane ${lane.label}${n ? `; its ${n} task${n === 1 ? '' : 's'} moved to ${into.label}` : ''}.` }
+  }
+
+  return fail(`Unknown action "${action}". Use list, add, update, remove, add_lane or remove_lane.`)
 }
 
 // What share of the session's cost one agent's requests came to. The ratios hold across Claude models
@@ -241,7 +418,7 @@ export function progressOf(crew: Crew, agent: Agent): number | null {
   if (agent.status === 'done') return 100
   const mine = crew.tasks.filter(t => t.assignee === agent.id)
   if (!mine.length) return null
-  return Math.round((mine.filter(t => t.status === 'done').length / mine.length) * 100)
+  return Math.round((mine.filter(t => t.lane === 'done').length / mine.length) * 100)
 }
 
 // What the card says the agent is doing: its newest entry while working, else what it was asked

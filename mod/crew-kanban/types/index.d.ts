@@ -1,5 +1,17 @@
-// The groups both tabs use: agents on Crew, tasks on Kanban (mockup: MOCK.statuses)
+// The groups agents are in on the Crew tab (mockup: MOCK.statuses)
 export type Status = 'planning' | 'in_progress' | 'done'
+
+// One list on the Kanban tab. The defaults are Planning, Backlog, In Progress, In Review, Blocked and
+// Done; an agent can add its own with the kanban tool when the work calls for one.
+export type Lane = {
+  id: string
+  label: string
+  color: string
+  // What a task in this lane means, for the agents reading the board
+  hint?: string
+  // Added by an agent rather than one of the defaults
+  isCustom?: boolean
+}
 
 // Drives the dot colour of an activity entry
 export type LogKind = 'read' | 'search' | 'edit' | 'run' | 'message'
@@ -46,13 +58,27 @@ export type Agent = {
 export type Task = {
   id: string
   title: string
-  status: Status
+  // The lane's id; an agent moves it with the kanban tool, Claude's task tools move it too
+  lane: string
   assignee?: string
+  // Why it sits where it is ("waiting for CI", "needs tests"), as the agent that moved it said
+  note?: string
+  // Where the task came from: Claude's TaskCreate / TodoWrite lists, or the kanban tool
+  source: 'task' | 'todo' | 'board'
+  // The status Claude's task tool last gave it, so a TodoWrite that repeats it leaves a board move be
+  toolStatus?: string
+  // The agent that moved it last, and when
+  movedBy?: string
+  movedAt?: number
 }
 
 export type Crew = {
   agents: Record<string, Agent>
   tasks: Task[]
+  // The Kanban tab's lists, in order
+  lanes: Lane[]
+  // The last number given a task the kanban tool added (K-01, K-02, ...)
+  boardSeq: number
   log: Entry[]
   // Files being written right now: path -> agent ids, newest writer first
   editing: Record<string, string[]>
@@ -71,8 +97,8 @@ export type Nav = {
 }
 
 export type Layout = {
-  // Collapsed Kanban groups, by status
-  collapsed: Partial<Record<Status, boolean>>
+  // Collapsed Kanban lanes, by lane id
+  collapsed: Record<string, boolean>
   // Folders the person opened or closed in the Edits tree, by path
   folders: Record<string, boolean>
   // Edits pane width, percent of the detail columns (20-80)

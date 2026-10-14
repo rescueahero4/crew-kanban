@@ -4,7 +4,7 @@
 
 **See your whole crew at a glance: every agent in your Claude session, what it's doing, and which files it's touching.**
 
-[![Version](https://img.shields.io/badge/version-0.1.0-d77757?style=for-the-badge)](mod/crew-kanban/.claude-plugin/plugin.json)
+[![Version](https://img.shields.io/badge/version-0.2.0-d77757?style=for-the-badge)](mod/crew-kanban/.claude-plugin/plugin.json)
 [![Claude Code mod](https://img.shields.io/badge/Claude_Code-mod-black?style=for-the-badge)](#setup)
 [![Session-scoped](https://img.shields.io/badge/data-session--scoped-6b4fc8?style=for-the-badge)](#where-your-data-lives)
 
@@ -15,6 +15,7 @@
 - 👀 **See who's working.** A band above the prompt sums up the crew. The **Crew** tab groups every agent by status: Planning, In Progress, Done.
 - 📊 **Check each agent's progress.** Role, model, effort, context use, tokens, cost and time sit on each agent's card, along with a progress bar.
 - 🗂️ **Watch files change live.** The **Edits** tree shows your project folder. Files an agent changed get an A/M/D badge, and files being written right now shimmer.
+- 🗃️ **Track the session's tasks.** The **Kanban** tab lists every task the agents work on, grouped into lanes: Planning, Backlog, In Progress, In Review, Blocked and Done. The agents move tasks between lanes themselves as the work changes, and can add lanes of their own (QA, Rework, ...).
 - 📜 **Follow what happened.** Each agent has an **Activity Log**. Each task on the **Kanban** tab merges the activity of every agent working on it.
 - 🧢 **Tell agents apart.** Every agent is a Clawd mascot whose accessories match its type: a wizard hat for the lead, a detective hat for reviewers, a hard hat for builders, a beret for designers. Claude draws new ones for unfamiliar agent types.
 
@@ -72,7 +73,7 @@ Type `/crew`, or click the band above the prompt. Click the band again to close 
 |---|---|
 | See how many agents are working and how far along they are | **Crew** tab |
 | See session totals: cost, tokens, time | top of the **Crew** tab |
-| See every task, grouped by status | **Kanban** tab |
+| See every task, grouped by lane | **Kanban** tab |
 | See which files one agent changed, and what it did | click the agent → **agent detail** |
 | See everything that happened on one task | click the task → **task detail** |
 | Jump from a task to one of its agents | click the agent's chip in task detail |
@@ -96,7 +97,8 @@ Type `/crew`, or click the band above the prompt. Click the band again to close 
 |---|---|
 | **Crew** | All the agents in the current session, including the main session itself. |
 | **Band** | The one-line summary above the prompt. Click it to open or close the pane. |
-| **Status** | Planning, In Progress or Done, for both agents and tasks. |
+| **Status** | Planning, In Progress or Done, for an agent. |
+| **Lane** | Where a task stands on the Kanban tab: Planning, Backlog, In Progress, In Review, Blocked, Done, or a lane an agent added. Agents move tasks with the `kanban` tool; tasks from Claude's own task list (TaskCreate, TodoWrite) show up too, in Backlog until started. |
 | **A / M / D** | Added, modified or deleted, shown next to a file in the Edits tree. |
 | **Shimmer** | A file that some agent is writing right now. It stays lit for a moment after the write lands. |
 | **Role** | Lead, Review, Implementation or Designer. It's inferred from the agent's type and picks the mascot's accessories. |
@@ -148,6 +150,7 @@ Session data (agents, tasks, edits, activity) is kept only in the session's stat
 Facts for agents working in this repo:
 
 - **Plugin:** `mod/crew-kanban/`, registered by `mod/.claude-plugin/marketplace.json` as `crew-kanban` in the `crew-kanban-mod` marketplace. The entry module is `hooks/register.tsx`, listed in `hooks/hooks.json`.
+- **Board tool:** the mod registers `mcp__crew-kanban__kanban` (actions `list`, `add`, `update`, `remove`, `add_lane`, `remove_lane`) and adds a short system-prompt section asking agents to keep the board current. It is served in `register.tsx` from `applyBoard` in `model.ts`.
 - **State:** all state lives in `atom`s scoped to `crew-kanban` (`crew`, `nav`, `layout`, `isOpen`, `generated`, `looks`). Keep it session-scoped and never persist it.
 - **Surfaces:** the `crew` pane is opened by `/crew` or the band, and the band is rendered into `AbovePrompt`. The roster polls every 1s, and the animation repaints every 250ms unless `reducedMotion` is on.
 - **Tests:** `hooks/crew.test.tsx`, using `claude-code/testing`.

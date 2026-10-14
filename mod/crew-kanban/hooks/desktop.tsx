@@ -4,11 +4,11 @@
 // vertical space (an empty SVG of so many px, never a padding of rows). What is pressed is a native
 // Button (its label one cell per character), drawn over or beside the SVG it belongs to.
 import type { Agent, Change, Entry, Status, Task } from '../types'
-import { CHANGE, STATUSES, fmtClock, fmtEffort, fmtModel, fmtTime, fmtTokens, statusOf } from './theme'
+import { CHANGE, STATUSES, fmtClock, fmtEffort, fmtModel, fmtTime, fmtTokens, laneOf, statusOf } from './theme'
 import { activityOf, agentsIn, isInProject, progressOf } from './model'
 import { CANVAS, compose } from './mascot'
 import { ICON } from './icons'
-import { isFolderOpen, type Ctx } from './views'
+import { isFolderOpen, lanesShown, type Ctx } from './views'
 
 // The mockup's tokens
 const T = {
@@ -406,31 +406,31 @@ function kanbanView(ctx: Ctx, w: number) {
   if (!ctx.crew.tasks.length) return emptySvg(ctx, w, [['No tasks in this crew yet.', 12, T.muted]], 32)
   const isNarrow = w <= 520
   // .task-groups: 8px from the bar, groups 8px apart; each group's toggle has 8px above it
-  const groups = STATUSES.map(st => {
-    const tasks = ctx.crew.tasks.filter(t => t.status === st.id)
-    const isCollapsed = !!ctx.layout.collapsed[st.id]
+  const groups = lanesShown(ctx).map(st => {
+    const tasks = ctx.crew.tasks.filter(t => t.lane === st.id)
+    // An empty lane is its heading alone, dimmed: six dashed "No tasks" boxes would bury the work
+    const isEmpty = !tasks.length
+    const isCollapsed = !!ctx.layout.collapsed[st.id] || isEmpty
     // .group-toggle: chevron, 4px, the status dot (6px, 5px gap); the label and the bold count are its Button
-    const lead = `<g opacity=".55">${ICON.chevron('#ffffff', !isCollapsed)}</g><circle cx="21" cy="7" r="3" fill="${st.color}"/>`
+    const chevron = isEmpty ? '' : `<g opacity=".55">${ICON.chevron('#ffffff', !isCollapsed)}</g>`
+    const lead = `${chevron}<circle cx="21" cy="7" r="3" fill="${st.color}"${isEmpty ? ' opacity=".45"' : ''}/>`
     return (
       <Box key={'tg-' + st.id} flexDirection="column">
         {vgap(ctx, 'tg-top-' + st.id, 8)}
         <Box flexDirection="row" alignItems="center">
           {svg(ctx, 29, 17, `<g transform="translate(0 1.5)">${lead}</g>`, '')}
           <Button key={'toggle-' + st.id} plain label={st.label} onPress={() => ctx.act.toggleGroup(st.id)}>
-            <Text color={st.color}>{st.label} </Text>
+            <Text color={isEmpty ? T.dim : st.color}>{st.label} </Text>
             <Text bold color={T.dim}>{tasks.length}</Text>
           </Button>
         </Box>
         {!isCollapsed && vgap(ctx, 'tg-gap-' + st.id, 4)}
-        {!isCollapsed &&
-          (tasks.length ? (
-            // .task-list: one card, rows split by hairlines
-            <Box flexDirection="column" backgroundColor={T.card} borderStyle="round" borderColor={T.border}>
-              {tasks.flatMap((t, i) => [...(i ? [<Box key={'hr-' + t.id}>{rule(ctx, w - 2, T.border)}</Box>] : []), taskRow(ctx, t, w, isNarrow)])}
-            </Box>
-          ) : (
-            svg(ctx, w, 43, `<rect x=".5" y=".5" width="${w - 1}" height="42" rx="8" fill="none" stroke="${T.border}" stroke-dasharray="4 3"/>` + text(w / 2, 25.4, 'No tasks', 11, T.dim, 'text-anchor="middle"'), 'No tasks')
-          ))}
+        {!isCollapsed && (
+          // .task-list: one card, rows split by hairlines
+          <Box flexDirection="column" backgroundColor={T.card} borderStyle="round" borderColor={T.border}>
+            {tasks.flatMap((t, i) => [...(i ? [<Box key={'hr-' + t.id}>{rule(ctx, w - 2, T.border)}</Box>] : []), taskRow(ctx, t, w, isNarrow)])}
+          </Box>
+        )}
       </Box>
     )
   })
@@ -441,7 +441,7 @@ function kanbanView(ctx: Ctx, w: number) {
 function taskRow(ctx: Ctx, task: Task, w: number, isNarrow: boolean) {
   const { Box, Button, Text } = ctx.els
   const agent = task.assignee ? ctx.crew.agents[task.assignee] : undefined
-  const isDone = task.status === 'done'
+  const isDone = task.lane === 'done'
   const padX = isNarrow ? 12 : 14
   const look = agent ? ctx.lookOf(agent) : undefined
   const chipW = look ? 28 + look.label.length * ctx.cellPx : measure('Unassigned', 11) + 18
@@ -461,6 +461,12 @@ function taskRow(ctx: Ctx, task: Task, w: number, isNarrow: boolean) {
         {agent && look ? pill(ctx, 'chip-' + task.id, look.label, look.color, () => ctx.act.go({ view: 'agent', id: agent.id, from: ctx.nav.from })) : unassignedSvg(ctx)}
         {hgap(ctx, padX)}
       </Box>
+      {task.note && (
+        <Box flexDirection="row">
+          {hgap(ctx, padX + (isNarrow ? 0 : 48))}
+          {svg(ctx, Math.max(40, w - 2 - padX * 2 - (isNarrow ? 0 : 48)), 17, text(0, 12.5, '↳ ' + fit(task.note, w - 2 - padX * 2 - (isNarrow ? 0 : 48) - 4, 11), 11, laneOf(ctx.crew.lanes, task.lane).color), task.note)}
+        </Box>
+      )}
       {vgap(ctx, 'tr-end', 10)}
     </Box>
   )
@@ -786,7 +792,7 @@ function taskDetail(ctx: Ctx, task: Task | undefined, w: number) {
   const entries = ctx.crew.log.filter(e => e.taskId === task.id)
   const ids = [...new Set([task.assignee, ...entries.map(e => e.agentId)].filter(Boolean))] as string[]
   const agents = ids.map(id => ctx.crew.agents[id]).filter(Boolean) as Agent[]
-  const st = statusOf(task.status)
+  const st = laneOf(ctx.crew.lanes, task.lane)
   // .task-head: padding 16; the id and status (11px, 10px apart), 6px, the title (17px bold, line 22.1),
   // then the agents 10px below it (gap 6 + margin 4), 6px apart, and 16px under them
   const titleLines = wrap(task.title, inner - 32, 17, true)
@@ -794,7 +800,11 @@ function taskDetail(ctx: Ctx, task: Task | undefined, w: number) {
   const sx = 16 + measure(task.id, 11) + 10
   head += `<circle cx="${sx + 3}" cy="24.25" r="3" fill="${st.color}"/>` + text(sx + 11, 28.4, st.label, 11, st.color)
   titleLines.forEach((line, i) => (head += text(16, 56 + i * 22.1, line, 17, T.text, 'font-weight="700"')))
-  const headH = Math.ceil(48.5 + 22.1 * titleLines.length)
+  let headH = Math.ceil(48.5 + 22.1 * titleLines.length)
+  if (task.note) {
+    head += text(16, headH + 13, '↳ ' + fit(task.note, inner - 36, 12), 12, st.color)
+    headH += 18
+  }
   const chips = agents.length
     ? agents.flatMap((a, i) => [...(i ? [hgap(ctx, 6)] : []), pill(ctx, 'tchip-' + a.id, ctx.lookOf(a).label, ctx.lookOf(a).color, () => ctx.act.go({ view: 'agent', id: a.id, from: ctx.nav.from }))])
     : [unassignedSvg(ctx)]
@@ -810,7 +820,7 @@ function taskDetail(ctx: Ctx, task: Task | undefined, w: number) {
         </Box>
         {vgap(ctx, 'head-end', 16)}
         {rule(ctx, inner)}
-        {paneHead(ctx, inner, 'Activity', entries.length ? entries.length + (entries.length === 1 ? ' entry' : ' entries') : '', task.status === 'in_progress' ? { text: 'Live', color: statusOf('in_progress').color, isLive: true } : undefined)}
+        {paneHead(ctx, inner, 'Activity', entries.length ? entries.length + (entries.length === 1 ? ' entry' : ' entries') : '', task.lane === 'in_progress' ? { text: 'Live', color: st.color, isLive: true } : undefined)}
         {logPane(ctx, entries, inner, agents.length > 1, ['No agent activity on this task', 'Agent log entries tagged with this task stream in here.'])}
       </Box>
     </Box>
