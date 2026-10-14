@@ -247,12 +247,12 @@ function topBar(ctx: Ctx, w: number) {
   }
   // .tab: a 42px tab standing on the bar's line. The active one is a card-coloured box with its top
   // corners rounded and no bottom edge, so it opens onto the line; the frame is drawn to the pixel and
-  // the icon and the label sit centred over it
+  // the label sits centred over it. Both tabs are the same height with the same overlay, so their
+  // labels share a line
   const tab = (view: 'crew' | 'kanban', label: string) => {
     const isOn = ctx.nav.view === view || ((ctx.nav.view === 'agent' || ctx.nav.view === 'task') && ctx.nav.from === view)
-    const glyph = view === 'crew' ? ICON.crew('#CDCDCD') : ICON.kanban('#777777')
-    const pad = isCompact ? 10 : 14
-    const tw = pad + 18 + label.length * ctx.cellPx + pad
+    const pad = isCompact ? 12 : 16
+    const tw = pad + label.length * ctx.cellPx + pad
     const frame = isOn
       ? `<path d="M.5 ${TAB_H}V8.5a8 8 0 0 1 8-8H${tw - 8.5}a8 8 0 0 1 8 8V${TAB_H}" fill="${T.card}" stroke="${T.border}"/>`
       : ''
@@ -260,7 +260,6 @@ function topBar(ctx: Ctx, w: number) {
       <Box key={'tabbox-' + view}>
         {svg(ctx, tw, TAB_H, frame, '')}
         <Box position="absolute" top={0} bottom={0} left={0} right={0} flexDirection="row" alignItems="center" justifyContent="center">
-          {svg(ctx, 18, 14, `<g opacity="${isOn ? 1 : 0.55}">${glyph}</g>`, '')}
           <Button key={'tab-' + view} plain label={label} onPress={() => ctx.act.go({ view, from: view })}>
             <Text bold color={isOn ? T.text : T.dim}>{label}</Text>
           </Button>

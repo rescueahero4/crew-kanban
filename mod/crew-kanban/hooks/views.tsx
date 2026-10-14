@@ -87,20 +87,20 @@ function mascot(ctx: Ctx, agent: Agent, isSmall: boolean) {
 function topBar(ctx: Ctx) {
   const { Box, Text, Button } = ctx.els
   const isCompact = ctx.cols < BREAK.compact
-  const tab = (view: 'crew' | 'kanban', icon: string, label: string, hotkey: string) => {
+  const tab = (view: 'crew' | 'kanban', label: string, hotkey: string) => {
     // A detail view keeps the tab it was opened from lit
     const isOn = ctx.nav.view === view || ((ctx.nav.view === 'agent' || ctx.nav.view === 'task') && ctx.nav.from === view)
     const button = (
       <Button key={'tab-' + view} plain hotkey={hotkey} label={label} onPress={() => ctx.act.go({ view, from: view })}>
-        <Text color={isOn ? C.text : C.dim}>{icon} </Text>
         <Text bold color={isOn ? C.text : C.dim}>{label}</Text>
       </Button>
     )
-    // The active tab is a raised pill, open at the bottom onto the bar's rule
+    // The active tab is a raised pill; the other takes the same three rows and two columns a side
+    // in padding, so both labels sit on the same row
     return isOn ? (
       <Box key={'tb-' + view} borderStyle="round" borderColor={C.border} paddingX={1}>{button}</Box>
     ) : (
-      <Box key={'tb-' + view} paddingX={2} paddingTop={1}>{button}</Box>
+      <Box key={'tb-' + view} paddingX={2} paddingY={1}>{button}</Box>
     )
   }
   const tokens = Object.values(ctx.crew.agents).reduce((n, a) => n + a.tokens, 0)
@@ -118,8 +118,8 @@ function topBar(ctx: Ctx) {
     <Box flexDirection="column">
       <Box flexDirection="row" justifyContent="space-between" alignItems="flex-end">
         <Box flexDirection="row" columnGap={isCompact ? 0 : 1} alignItems="flex-end">
-          {tab('crew', '⚇', 'Crew', '1')}
-          {tab('kanban', '▥', 'Kanban', '2')}
+          {tab('crew', 'Crew', '1')}
+          {tab('kanban', 'Kanban', '2')}
         </Box>
         <Box flexDirection="row">
           {stat('Cost', '$' + ctx.crew.costUsd.toFixed(2))}
