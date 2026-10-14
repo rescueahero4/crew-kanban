@@ -4,8 +4,8 @@
 // vertical space (an empty SVG of so many px, never a padding of rows). What is pressed is a native
 // Button (its label one cell per character), drawn over or beside the SVG it belongs to.
 import type { Agent, Change, Entry, Status, Task } from '../types'
-import { CHANGE, STATUSES, fmtClock, fmtEffort, fmtModel, fmtTime, fmtTokens, laneOf, statusOf } from './theme'
-import { activityOf, agentsIn, isInProject, progressOf } from './model'
+import { CHANGE, GIT, STATUSES, fmtClock, fmtEffort, fmtModel, fmtTime, fmtTokens, laneOf, statusOf } from './theme'
+import { activityOf, agentsIn, gitLabelOf, isInProject, progressOf } from './model'
 import { CANVAS, compose } from './mascot'
 import { ICON } from './icons'
 import { isFolderOpen, lanesShown, type Ctx } from './views'
@@ -278,8 +278,44 @@ function topBar(ctx: Ctx, w: number) {
         <Box alignSelf="center">{svg(ctx, x - 4, isCompact ? 36 : 34, body, stats.map(s => s.join(' ')).join(', '))}</Box>
       </Box>
       {rule(ctx, w, T.border)}
+      {gitRow(ctx, w)}
     </Box>
   )
+}
+
+// The session's git under the tabs, 12px on a 26px line: "◆ main", "◆ main › ⎇ new-feat" once it has
+// moved off the branch it started on, a "wt" tag first in a linked worktree; nothing outside a repository
+function gitRow(ctx: Ctx, w: number) {
+  const label = gitLabelOf(ctx.git)
+  if (!label) return undefined
+  const { Box } = ctx.els
+  const y = 17.5
+  let x = 0
+  let body = ''
+  if (label.isWorktree) {
+    const tw = measure('wt', 10, true) + 10
+    body += `<rect x=".5" y="5.5" width="${tw - 1}" height="15" rx="4" fill="none" stroke="${T.accent}"/>` + text(5, 16.5, 'wt', 10, T.accent, 'font-weight="700"')
+    x += tw + 8
+  }
+  // Each branch name gets an even share of what's left, so a long one never hides the other
+  const room = (w - x - (label.from ? 64 : 20)) / (label.from ? 2 : 1)
+  const place = (icon: string, name: string, isDetached: boolean, color: string) => {
+    body += `<g transform="translate(${x} 6)">${icon}</g>`
+    x += 20
+    const shown = fit(name + (isDetached ? ' (detached)' : ''), room, 12)
+    body += text(x, y, shown, 12, color)
+    x += measure(shown, 12)
+  }
+  if (label.from) {
+    place(ICON.git(GIT.color), label.from.branch, label.from.isDetached, T.muted)
+    body += text(x + 8, y, '›', 12, T.dim)
+    x += 24
+    place(ICON.branch(GIT.color), label.to.branch, label.to.isDetached, T.text)
+  } else {
+    place(ICON.git(GIT.color), label.to.branch, label.to.isDetached, T.text)
+  }
+  const alt = (label.isWorktree ? 'worktree ' : '') + (label.from ? `${label.from.branch} › ${label.to.branch}` : label.to.branch)
+  return <Box key="git">{svg(ctx, Math.max(1, Math.min(w, x + 2)), 26, body, 'git: ' + alt)}</Box>
 }
 
 // ── Agent card (.agent-card) ─────────────────────────────────────────────────────────

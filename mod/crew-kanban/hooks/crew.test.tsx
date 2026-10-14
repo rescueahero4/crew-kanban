@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { BOARD_TOOL, applyBoard, applyTaskTool, describe as said, emptyCrew, newAgent } from './model'
+import { BOARD_TOOL, applyBoard, applyTaskTool, describe as said, emptyCrew, gitPlaceOf, gitText, newAgent, nextGit } from './model'
 import { LANE_COLORS } from './theme'
 import type { Crew } from '../types'
 
@@ -158,4 +158,68 @@ test('the band and every screen of the pane draw on terminal and desktop', async
     await ui.press({ key: 'tab-crew' })
     await ui.unmount()
   }
+})
+
+test('git reads as the branch, the branch it moved to, and a worktree', async () => {
+  const main = gitPlaceOf('C:/w/.git\nC:/w/.git\nC:/w\n', 'main\n')
+  expect(main).toMatchObject({ branch: 'main', isWorktree: false, isDetached: false, root: 'C:/w' })
+  expect(gitPlaceOf('', '')).toBeUndefined()
+
+  let git = nextGit({}, main)
+  expect(gitText(git)).toBe('◆ main')
+  git = nextGit(git, gitPlaceOf('C:/w/.git\nC:/w/.git\nC:/w', 'new-feat'))
+  expect(gitText(git)).toBe('◆ main › ⎇ new-feat')
+  // A linked worktree keeps its git folder under the repository's .git/worktrees
+  git = nextGit(git, gitPlaceOf('C:/w/.git/worktrees/fix\nC:/w/.git\nC:/w-fix', 'fix'))
+  expect(gitText(git)).toBe('[wt] ◆ main › ⎇ fix')
+  // Back on the branch it started on, the label is the one branch again
+  git = nextGit(git, main)
+  expect(gitText(git)).toBe('◆ main')
+  // Another repository starts the story over; leaving every repository clears the label
+  git = nextGit(git, gitPlaceOf('D:/other/.git\nD:/other/.git\nD:/other', 'dev'))
+  expect(gitText(git)).toBe('◆ dev')
+  expect(gitText(nextGit(git, undefined))).toBeUndefined()
+  expect(gitPlaceOf('C:/w/.git\nC:/w/.git\nC:/w', '', 'abc1234\n')).toMatchObject({ branch: 'abc1234', isDetached: true })
+})
+
+test('the pane shows the session\'s git under the tabs, and follows a checkout', async ($, on) => {
+  const clock = mock.clock(on)
+  let branch = 'main'
+  on('process.run', async ($, e) => {
+    const args = e.argv.slice(1).join(' ')
+    const out = (exitCode: number, stdout: string) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (args.startsWith('rev-parse --path-format')) return out(0, 'C:/w/.git\nC:/w/.git\nC:/w\n')
+    if (args === 'branch --show-current') return out(0, branch + '\n')
+    return out(1, '')
+  })
+  // The status line, as the session would pin it
+  let status: string | undefined
+  on('ui.status', async ($, e) => {
+    status = e.text
+    return { value: undefined }
+  })
+  on('tool.call', async () => ({ result: 'ok', text: 'ok' }))
+  on('ui.render', async ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return Box({})
+  })
+  // A shell call is when a checkout happens: git is read again right after it
+  await $.tool.call({ tool: 'Bash', command: 'git status' } as never)
+  await clock.advance(10)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'crew-kanban', surface, component: 'Pane', props: PANE, requestId: 'crew' })
+    expect(await shows(ui, /^main$|git: main/)).toBe(true)
+    await ui.unmount()
+  }
+  expect(status).toBe('◆ main')
+  branch = 'new-feat'
+  await $.tool.call({ tool: 'Bash', command: 'git checkout -b new-feat' } as never)
+  await clock.advance(10)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'crew-kanban', surface, component: 'Pane', props: PANE, requestId: 'crew' })
+    expect(await shows(ui, /^new-feat$|git: main › new-feat/)).toBe(true)
+    expect(await shows(ui, /^main$|git: main › new-feat/)).toBe(true)
+    await ui.unmount()
+  }
+  expect(status).toBe('◆ main › ⎇ new-feat')
 })

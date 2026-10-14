@@ -4,7 +4,7 @@
 
 **See your whole crew at a glance: every agent in your Claude session, what it's doing, which files it's touching, and where each task stands.**
 
-[![Version](https://img.shields.io/badge/version-0.2.1-d77757?style=for-the-badge)](mod/crew-kanban/.claude-plugin/plugin.json)
+[![Version](https://img.shields.io/badge/version-0.3.0-d77757?style=for-the-badge)](mod/crew-kanban/.claude-plugin/plugin.json)
 [![Claude Code mod](https://img.shields.io/badge/Claude_Code-mod-black?style=for-the-badge)](#setup)
 [![Session-scoped](https://img.shields.io/badge/data-session--scoped-6b4fc8?style=for-the-badge)](#reference)
 
@@ -23,6 +23,7 @@
 - 📊 **Check each agent's progress.** Role, model, effort, context use, tokens, cost and time sit on each agent's card, along with a progress bar.
 - 🗃️ **Track the session's tasks.** The **Kanban** tab lists every task the agents work on, in lanes: Planning, Backlog, In Progress, In Review, Blocked and Done. The agents move tasks between lanes themselves as the work changes, and add lanes of their own (QA, Rework, ...) when the work needs one.
 - 🗂️ **Watch files change live.** The **Edits** tree shows your project folder. Files an agent changed get an A/M/D badge, and files being written right now shimmer.
+- 🌿 **Know which branch you're on.** In a git repository the status line and the pane show the branch, like `◆ main`. If the session moves to another branch it shows where it started and where it is now, `◆ main › ⎇ new-feat`, and `[wt]` marks a linked worktree.
 - 📜 **Follow what happened.** Each agent has an **Activity Log**. Each task merges the activity of every agent working on it.
 - 🧢 **Tell agents apart.** Every agent is a Clawd mascot whose accessories match its type: a wizard hat for the lead, a detective hat for reviewers, a hard hat for builders, a beret for designers. Claude draws new ones for unfamiliar agent types.
 
@@ -186,6 +187,7 @@ One hooks module and the views it draws, all in `mod/crew-kanban/`:
 | **Band** | The one-line summary above the prompt. Click it to open or close the pane. |
 | **Status** | Planning, In Progress or Done, for an agent. |
 | **Lane** | Where a task stands on the Kanban tab: one of the six defaults, or a lane an agent added. |
+| **Git label** | The branch the session's folder is on, under the tabs and in the status line. `◆ main` is the branch the session started on; `◆ main › ⎇ new-feat` means it has since moved to `new-feat`; `[wt]` (a **wt** tag on Desktop) means a linked worktree. It's read when the session starts, after every shell or worktree tool call, and every 5 seconds. |
 | **Note** | A short reason an agent gave for where a task sits, like "waiting for CI". |
 | **A / M / D** | Added, modified or deleted, shown next to a file in the Edits tree. |
 | **Shimmer** | A file that some agent is writing right now. It stays lit for a moment after the write lands. |
@@ -226,6 +228,7 @@ Session data (agents, tasks, lanes, edits, activity) is kept only in the session
 - **I don't see the band.** It only shows up once the session has used a tool or started a subagent. You can still type `/crew` to open the pane.
 - **The Kanban tab is empty.** The agents haven't planned any multi-step work yet. Ask for something with a few steps, or ask Claude to put its plan on the board.
 - **Tasks don't move.** The agents decide when a task changes lane. If one is stale, tell Claude, for example "move the API task to In Review".
+- **There's no git label.** The session's folder isn't in a git repository, or `git` isn't on the PATH.
 - **The Edits tree is missing a folder.** `.git` and `node_modules` are skipped on purpose.
 - **The motion is distracting.** Turn on **Reduce motion** in the plugin's options.
 - **An agent's mascot looks generic at first.** Claude hasn't drawn accessories for that agent type yet. Until it does, the agent wears a placeholder look.

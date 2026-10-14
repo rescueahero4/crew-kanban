@@ -1,6 +1,6 @@
 {
   "name": "crew-kanban",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "A live view of this session's agents, tasks, file edits and activity, with a Kanban list agents keep current: a band above the prompt and a Crew pane",
   "author": { "name": "rbaga" },
   "types": "./types/index.d.ts",

@@ -1,7 +1,7 @@
 // The session's crew as plain data, and the pure steps that change it. The hooks module feeds these
 // from tool calls, model requests and the agent roster; the views only read.
-import type { Agent, Change, Crew, Entry, Lane, LogKind, Status, Task } from '../types'
-import { DEFAULT_LANES, laneOf } from './theme'
+import type { Agent, Change, Crew, Entry, Git, GitPlace, Lane, LogKind, Status, Task } from '../types'
+import { DEFAULT_LANES, GIT, laneOf } from './theme'
 
 export const MAIN = 'main'
 // The kanban tool this mod registers, as the model calls it
@@ -431,3 +431,49 @@ export function activityOf(crew: Crew, agent: Agent): string {
 }
 
 export const agentsIn = (crew: Crew) => Object.values(crew.agents).sort((a, b) => a.order - b.order)
+
+// ── Git: where the session's folder stands ────────────────────────────────────────
+
+// A checkout from `git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel`,
+// `git branch --show-current` (empty when HEAD is detached) and, then, the short commit
+export function gitPlaceOf(revParse: string, branch: string, commit = ''): GitPlace | undefined {
+  const [gitDir, repo, root] = revParse.trim().split(/\r?\n/).map(line => line.trim().replace(/\\/g, '/').replace(/\/$/, ''))
+  if (!gitDir || !repo || !root) return undefined
+  const name = branch.trim()
+  return {
+    branch: name || commit.trim() || 'HEAD',
+    isDetached: !name,
+    // A linked worktree keeps its own git folder under the repository's .git/worktrees
+    isWorktree: gitDir.toLowerCase() !== repo.toLowerCase(),
+    root,
+    repo,
+  }
+}
+
+const samePlace = (a: GitPlace, b: GitPlace) => a.branch === b.branch && a.root === b.root && a.isDetached === b.isDetached
+
+// The session's git as it now reads; the start holds until the session moves to another repository
+export function nextGit(git: Git, now: GitPlace | undefined): Git {
+  if (!now) return git.now ? { start: git.start } : git
+  if (git.now && samePlace(git.now, now)) return git
+  const start = git.start && git.start.repo === now.repo ? git.start : now
+  return { start, now }
+}
+
+export type GitLabel = { isWorktree: boolean; from?: GitPlace; to: GitPlace }
+
+// What the label shows: the branch now, and the one the session started on when it has moved since
+export function gitLabelOf(git: Git): GitLabel | undefined {
+  const { start, now } = git
+  if (!now) return undefined
+  const hasMoved = !!start && !samePlace(start, now)
+  return { isWorktree: now.isWorktree, from: hasMoved ? start : undefined, to: now }
+}
+
+// The label as text, for the status line: "◆ main", "◆ main › ⎇ new-feat", "[wt] ◆ main › ⎇ fix"
+export function gitText(git: Git): string | undefined {
+  const label = gitLabelOf(git)
+  if (!label) return undefined
+  const wt = label.isWorktree ? GIT.worktree + ' ' : ''
+  return label.from ? `${wt}${GIT.icon} ${label.from.branch} › ${GIT.branch} ${label.to.branch}` : `${wt}${GIT.icon} ${label.to.branch}`
+}

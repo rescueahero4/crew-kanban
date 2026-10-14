@@ -38,6 +38,9 @@ export const LANE_COLORS = ['#ec7f6d', '#d8aa52', '#8ea6f2', '#2fbf9b', '#b9509f
 const UNKNOWN_LANE: Lane = { id: '', label: 'Unsorted', color: '#777777' }
 export const laneOf = (lanes: Lane[], id: string): Lane => lanes.find(l => l.id === id) ?? { ...UNKNOWN_LANE, id, label: id }
 
+// The git label's marks: the branch the session started on, the one it moved to, a linked worktree
+export const GIT = { icon: '◆', branch: '⎇', worktree: '[wt]', color: '#f05032' }
+
 // A finer word than the group's, shown on the label where the engine says more (Waiting, Failed, ...)
 export const RAW_LABEL: Partial<Record<string, { label: string; color?: string }>> & { waiting: { label: string; color: string } } = {
   waiting: { label: 'Waiting', color: '#e5a800' },

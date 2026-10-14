@@ -4,7 +4,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallResult } from 'claude-code'
 
-import type { Agent, Crew, Layout, Look, Nav, Part, Task } from '../types'
+import type { Agent, Crew, Git, GitPlace, Layout, Look, Nav, Part, Task } from '../types'
 import { LIBRARY, isValidPart } from './mascot'
 import {
   BOARD_TOOL,
@@ -16,8 +16,11 @@ import {
   deletedBy,
   describe,
   emptyCrew,
+  gitPlaceOf,
+  gitText,
   groupOf,
   newAgent,
+  nextGit,
   rel,
   setEditing,
   weightOf,
@@ -34,10 +37,15 @@ const layoutAtom = atom({ plugin: 'crew-kanban', key: 'layout' } as const, { col
 const openAtom = atom({ plugin: 'crew-kanban', key: 'isOpen' } as const, false)
 const generatedAtom = atom({ plugin: 'crew-kanban', key: 'generated' } as const, {} as Record<string, Part>)
 const looksAtom = atom({ plugin: 'crew-kanban', key: 'looks' } as const, {} as Record<string, Look>)
+const gitAtom = atom({ plugin: 'crew-kanban', key: 'git' } as const, {} as Git)
 
 // How long a written file keeps its editing state after the write lands, so the eye can catch it
 const LINGER_MS = 2500
 const TASK_TOOLS = new Set(['TaskCreate', 'TaskUpdate', 'TodoWrite'])
+// Tools after which the session's branch or folder may have moved, so git is read again at once
+const GIT_TOOLS = new Set(['Bash', 'PowerShell', 'EnterWorktree', 'ExitWorktree'])
+// How often git is read regardless, for a checkout made outside the session
+const GIT_EVERY_MS = 5000
 const SKIP_DIRS = new Set(['.git', 'node_modules'])
 
 // The tool every agent in the session moves work across the board with
@@ -92,6 +100,9 @@ let drawn: Ctx['drawn'] = []
 const lingers = new Map<string, { path: string; agentId: string; until: number }>()
 const listings = new Map<string, { at: number; entries: Tree }>()
 const drawing = new Set<string>()
+// A git read in flight, so a burst of shell calls runs it once; and the status line last set
+let gitReading: Promise<void> | undefined
+let shownStatus: string | undefined | null = null
 
 const ensureAgent = (crew: Crew, id: string, at: number): Crew => {
   if (crew.agents[id]) return crew
@@ -120,6 +131,36 @@ async function holdScroll($: EngineInterface, agentId: string, taskId?: string) 
   const nav = await read($, navAtom)
   const isShown = (nav.view === 'agent' && nav.id === agentId) || (nav.view === 'task' && !!taskId && nav.id === taskId)
   if (isShown) await update($, layoutAtom, l => (l.logBack > 0 ? { ...l, logBack: l.logBack + 1 } : l))
+}
+
+// ── Git: the branch the session is on, and the one it started on ──────────────────
+
+// Reads where the session's folder stands in git; outside a repository, or with no git, it has none
+async function readGit($: EngineInterface) {
+  // Run in the session's folder, which follows the session into a worktree
+  const git = (args: string[]) => $.process.run(['git', ...args], { timeoutMs: 5000 })
+  const where = await git(['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-toplevel']).catch(() => undefined)
+  let place: GitPlace | undefined
+  if (where?.exitCode === 0) {
+    const branch = await git(['branch', '--show-current'])
+    const commit = branch.stdout.trim() ? '' : (await git(['rev-parse', '--short', 'HEAD'])).stdout
+    place = gitPlaceOf(where.stdout, branch.stdout, commit)
+  }
+  const before = await read($, gitAtom)
+  const after = await update($, gitAtom, g => nextGit(g, place))
+  if (JSON.stringify(after) !== JSON.stringify(before)) $.ui.invalidate('ui.render')
+  const text = gitText(after)
+  if (text !== shownStatus) {
+    shownStatus = text
+    $.ui.status(text)
+  }
+}
+
+function refreshGit($: EngineInterface) {
+  gitReading ??= readGit($)
+    .catch(() => undefined)
+    .finally(() => (gitReading = undefined))
+  return gitReading
 }
 
 // ── The roster, the session's totals and the clock ────────────────────────────────
@@ -294,7 +335,9 @@ export const register: Register = (on, options) => {
     }))
     await $.tool.register(BOARD)
     await poll($).catch(() => undefined)
+    await refreshGit($)
     $.clock.every(1000, () => void poll($).catch(() => undefined))
+    $.clock.every(GIT_EVERY_MS, () => void refreshGit($))
     $.clock.every(250, () => void animate($).catch(() => undefined))
     return next(e)
   })
@@ -395,6 +438,8 @@ export const register: Register = (on, options) => {
       lingers.set(said.path + '\n' + agentId, { path: said.path, agentId, until: done + LINGER_MS })
       listings.delete(said.path.includes('/') ? said.path.slice(0, said.path.lastIndexOf('/')) : '')
     }
+    // A checkout, a new branch or a worktree shows at once rather than at the next timed read
+    if (GIT_TOOLS.has(tool)) void refreshGit($)
     return ran
   }).catch(($, e, next) => next(e)) // Bookkeeping that fails never holds a tool call up
 
@@ -402,12 +447,13 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
-    const [crew, nav, layout, looks, generated] = await Promise.all([
+    const [crew, nav, layout, looks, generated, git] = await Promise.all([
       read($, crewAtom),
       read($, navAtom),
       read($, layoutAtom),
       read($, looksAtom),
       read($, generatedAtom),
+      read($, gitAtom),
     ])
     const now = await $.clock.now()
     const agent = nav.view === 'agent' ? crew.agents[nav.id ?? ''] : undefined
@@ -422,6 +468,7 @@ export const register: Register = (on, options) => {
       tick,
       isReduced,
       crew,
+      git,
       nav,
       layout,
       lookOf: lookFor(looks),

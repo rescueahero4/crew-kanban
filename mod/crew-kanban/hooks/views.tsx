@@ -1,9 +1,9 @@
 // The Crew pane's screens and the band above the prompt. On the Desktop app the pane is drawn by
 // desktop.tsx to the mockup's pixels; here it's the terminal's version: the mockup's order, spacing,
 // colours and words on a grid of cells, a Button for everything the mockup made clickable.
-import type { Agent, Crew, Entry, Layout, Look, Nav, Part, Status, Task } from '../types'
-import { CHANGE, C, KIND, RAW_LABEL, STATUSES, fmtClock, fmtEffort, fmtModel, fmtTime, fmtTokens, laneOf, statusOf, tint } from './theme'
-import { activityOf, agentsIn, isInProject, progressOf } from './model'
+import type { Agent, Crew, Entry, Git, Layout, Look, Nav, Part, Status, Task } from '../types'
+import { CHANGE, C, GIT, KIND, RAW_LABEL, STATUSES, fmtClock, fmtEffort, fmtModel, fmtTime, fmtTokens, laneOf, statusOf, tint } from './theme'
+import { activityOf, agentsIn, gitLabelOf, isInProject, progressOf } from './model'
 import { compose, frameOf, rasterCells, shrink, svgOf } from './mascot'
 import { desktopPane } from './desktop'
 
@@ -23,6 +23,8 @@ export type Ctx = {
   tick: number
   isReduced: boolean
   crew: Crew
+  // Where the session's folder stands in git, shown under the tabs
+  git: Git
   nav: Nav
   layout: Layout
   lookOf: (agent: Agent) => Look
@@ -128,6 +130,30 @@ function topBar(ctx: Ctx) {
         </Box>
       </Box>
       {rule(ctx, ctx.cols, C.border)}
+      {gitRow(ctx)}
+    </Box>
+  )
+}
+
+// The session's git under the tabs: "◆ main", or "◆ main › ⎇ new-feat" once it has moved off the
+// branch it started on, "[wt]" first in a linked worktree; nothing outside a repository
+function gitRow(ctx: Ctx) {
+  const label = gitLabelOf(ctx.git)
+  if (!label) return undefined
+  const { Box, Text } = ctx.els
+  const detached = (isDetached: boolean) => (isDetached ? <Text color={C.dim}> (detached)</Text> : undefined)
+  return (
+    <Box key="git" flexDirection="row" paddingX={1}>
+      <Text wrap="truncate-end">
+        {label.isWorktree ? <Text color={C.accent}>{GIT.worktree} </Text> : undefined}
+        <Text color={GIT.color}>{GIT.icon} </Text>
+        {label.from ? <Text color={C.muted}>{label.from.branch}</Text> : <Text color={C.text}>{label.to.branch}</Text>}
+        {label.from ? detached(label.from.isDetached) : detached(label.to.isDetached)}
+        {label.from ? <Text color={C.dim}> › </Text> : undefined}
+        {label.from ? <Text color={GIT.color}>{GIT.branch} </Text> : undefined}
+        {label.from ? <Text color={C.text}>{label.to.branch}</Text> : undefined}
+        {label.from ? detached(label.to.isDetached) : undefined}
+      </Text>
     </Box>
   )
 }

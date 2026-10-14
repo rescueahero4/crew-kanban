@@ -1,5 +1,14 @@
 // The mockup's icons (.design-recall/mockups/assets), as SVG markup the desktop renderer draws
 export const ICON = {
+  // The git mark, 14x14: a diamond with a branch in it, for the branch the session started on
+  git: (fill: string) =>
+    `<rect x="2.4" y="2.4" width="9.2" height="9.2" rx="1.6" transform="rotate(45 7 7)" fill="${fill}"/>` +
+    `<g fill="none" stroke="#ffffff" stroke-width="1.1" stroke-linecap="round"><path d="M5.4 4.9v4.2M5.4 6.1l3.1 1.8"/></g>` +
+    `<circle cx="5.4" cy="9.3" r="1" fill="#ffffff"/><circle cx="8.6" cy="8" r="1" fill="#ffffff"/>`,
+  // A branch, 14x14: the branch the session moved to
+  branch: (stroke: string) =>
+    `<g fill="none" stroke="${stroke}" stroke-width="1.3" stroke-linecap="round"><circle cx="4" cy="3" r="1.6"/><circle cx="4" cy="11" r="1.6"/>` +
+    `<circle cx="10.5" cy="4.5" r="1.6"/><path d="M4 4.6v4.8M10.5 6.1c0 2.4-3.2 2.2-5.6 3.6"/></g>`,
   // icon-chevron-down.svg, 14x14; rotated -90° when closed
   chevron: (stroke: string, isOpen: boolean) =>
     `<path d="M3.5 5.83333L7 9.33333L10.5 5.83333" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke="${stroke}"${isOpen ? '' : ' transform="rotate(-90 7 7)"'}/>`,

@@ -107,6 +107,25 @@ export type Layout = {
   logBack: number
 }
 
+// Where the session's folder stands in git: its branch, or the commit when HEAD is detached
+export type GitPlace = {
+  branch: string
+  isDetached: boolean
+  // A linked worktree (git worktree add), not the repository's main checkout
+  isWorktree: boolean
+  // The checkout's top folder
+  root: string
+  // The repository's own .git folder, the same for every worktree of it
+  repo: string
+}
+
+export type Git = {
+  // Where the session was when the mod first saw it in a repository
+  start?: GitPlace
+  // Where it is now; absent when the session's folder isn't in a repository
+  now?: GitPlace
+}
+
 // Pixel-art accessory: rows of palette keys, `.` transparent (mockup: MOCK.mascots.parts)
 export type Part = {
   slot: 'hat' | 'prop'
@@ -126,6 +145,7 @@ declare module 'claude-code' {
       nav: Nav
       layout: Layout
       isOpen: boolean
+      git: Git
       // Accessories Claude drew for agent types the library has none for, by part id
       generated: Record<string, Part>
       // Role look per agent type that has generated accessories
