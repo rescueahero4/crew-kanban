@@ -48,7 +48,7 @@
 
 # Setup
 
-Three steps.
+Two steps. You don't need to clone anything, and you don't need npm.
 
 ## Step 1 — Install Claude Code
 
@@ -58,25 +58,61 @@ You need [Claude Code](https://claude.com/claude-code) in the terminal or the de
 claude --version
 ```
 
-Crew Kanban is a **mod**: a Claude Code plugin that draws its own interface inside Claude.
+Crew Kanban is a **mod**: a Claude Code plugin that draws its own interface inside Claude. Claude Code installs plugins from a *marketplace*, and this GitHub repo is one.
 
-## Step 2 — Get the code
+## Step 2 — Add the mod
 
-```sh
-git clone https://github.com/rescueahero4/crew-kanban.git
-cd crew-kanban
-```
-
-## Step 3 — Add the mod
-
-In a Claude session, add this repo's `mod/` folder as a plugin marketplace, then install the plugin:
+In any Claude session, add this repo as a marketplace, then install the plugin from it:
 
 ```sh
-/plugin marketplace add ./mod
+/plugin marketplace add rescueahero4/crew-kanban
 /plugin install crew-kanban@crew-kanban-mod
 ```
 
-Use the path to `mod/` from wherever your session is running. Then type `/crew`. That's it.
+Then run `/reload-plugins` (or start a new session) and type `/crew`. That's it: the mod is now on for every project you open.
+
+<details>
+<summary>Prefer the terminal?</summary>
+
+The same two steps work from your shell, outside a session:
+
+```sh
+claude plugin marketplace add rescueahero4/crew-kanban
+claude plugin install crew-kanban@crew-kanban-mod
+```
+
+Start a new session and type `/crew`.
+
+</details>
+
+<details>
+<summary>Install it for one project only, or for your whole team</summary>
+
+By default the mod is installed for you, in every project. To turn it on for just one project, run these from that project's folder:
+
+```sh
+claude plugin marketplace add rescueahero4/crew-kanban --scope project
+claude plugin install crew-kanban@crew-kanban-mod --scope project
+```
+
+With `--scope project`, the install is written to the project's `.claude/settings.json`. Commit that file and teammates who trust the project are offered the mod too. Use `--scope local` instead to keep it to yourself in that project.
+
+</details>
+
+<details>
+<summary>Install from a local clone (to change the code)</summary>
+
+If you want to edit the mod, clone the repo and add the clone as the marketplace:
+
+```sh
+git clone https://github.com/rescueahero4/crew-kanban.git
+claude plugin marketplace add ./crew-kanban
+claude plugin install crew-kanban@crew-kanban-mod
+```
+
+Give `marketplace add` the path to the repo's root folder, the one that holds `.claude-plugin/`. A local install is read straight from `mod/crew-kanban`, so `/reload-plugins` picks up your edits without reinstalling.
+
+</details>
 
 <details>
 <summary>What this adds</summary>
@@ -93,7 +129,26 @@ It doesn't write any files to your project. Everything it tracks is kept in the 
 <details>
 <summary>Updating it later</summary>
 
-The plugin is read straight from the `mod/crew-kanban` folder, so after a `git pull` run `/reload-plugins` (or start a new session) to load the new code. When the version in `plugin.json` changes, `claude plugin update crew-kanban@crew-kanban-mod` records it too.
+Fetch the latest marketplace, then update the plugin:
+
+```sh
+claude plugin marketplace update crew-kanban-mod
+claude plugin update crew-kanban@crew-kanban-mod
+```
+
+Restart Claude Code to load the new version. Updates arrive when the version in `plugin.json` goes up.
+
+From a local clone, `git pull` and then `/reload-plugins` is enough.
+
+</details>
+
+<details>
+<summary>Removing it</summary>
+
+```sh
+claude plugin uninstall crew-kanban@crew-kanban-mod
+claude plugin marketplace remove crew-kanban-mod
+```
 
 </details>
 
@@ -214,7 +269,7 @@ Set them in the plugin's settings in Claude Code.
 |---|---|
 | The mod itself | `mod/crew-kanban/` |
 | Plugin manifest and options | `mod/crew-kanban/.claude-plugin/plugin.json` |
-| Marketplace entry | `mod/.claude-plugin/marketplace.json` |
+| Marketplace entry | `.claude-plugin/marketplace.json` (repo root) |
 | The GIFs in this README | `assets/demo/` |
 | Product context | `PRODUCT.md` |
 
@@ -233,6 +288,9 @@ Session data (agents, tasks, lanes, edits, activity) is kept only in the session
 - **The motion is distracting.** Turn on **Reduce motion** in the plugin's options.
 - **An agent's mascot looks generic at first.** Claude hasn't drawn accessories for that agent type yet. Until it does, the agent wears a placeholder look.
 - **A change to the mod doesn't show.** Run `/reload-plugins`, or start a new session.
+- **`/plugin install` says it can't find `crew-kanban`.** Check the marketplace was added: `claude plugin marketplace list` should show `crew-kanban-mod`. If it's there but stale, run `claude plugin marketplace update crew-kanban-mod`.
+- **I installed it from `./mod` before and now it's broken.** The marketplace file moved from `mod/` to the repo root. Add the marketplace again from the new place, `claude plugin marketplace add rescueahero4/crew-kanban` (or the path to your clone's root folder). It keeps the name `crew-kanban-mod`, so the plugin you installed carries on.
+- **`npm install` or `npx` doesn't install it.** Claude Code doesn't load plugins from npm packages. Use the marketplace steps in [Setup](#setup).
 
 </details>
 
@@ -241,7 +299,7 @@ Session data (agents, tasks, lanes, edits, activity) is kept only in the session
 
 Facts for agents working in this repo:
 
-- **Plugin:** `mod/crew-kanban/`, registered by `mod/.claude-plugin/marketplace.json` as `crew-kanban` in the `crew-kanban-mod` marketplace. The entry module is `hooks/register.tsx`, listed in `hooks/hooks.json`.
+- **Plugin:** `mod/crew-kanban/`, registered by the repo-root `.claude-plugin/marketplace.json` as `crew-kanban` in the `crew-kanban-mod` marketplace. Keep the marketplace file at the root: `claude plugin marketplace add rescueahero4/crew-kanban` only finds it there. The entry module is `hooks/register.tsx`, listed in `hooks/hooks.json`.
 - **Board tool:** the mod registers `mcp__crew-kanban__kanban` (actions `list`, `add`, `update`, `remove`, `add_lane`, `remove_lane`) and adds a short system-prompt section asking agents to keep the board current. It is served in `register.tsx` from `applyBoard` in `model.ts`.
 - **State:** all state lives in `atom`s scoped to `crew-kanban` (`crew`, `nav`, `layout`, `isOpen`, `generated`, `looks`). Keep it session-scoped and never persist it.
 - **Surfaces:** the `crew` pane is opened by `/crew` or the band, and the band is rendered into `AbovePrompt`. The roster polls every 1s, and the animation repaints every 250ms unless `reducedMotion` is on.
